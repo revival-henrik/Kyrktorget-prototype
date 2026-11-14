@@ -55,9 +55,10 @@ python site/build_site.py --db data/sample.db --out dist
 python -m http.server -d dist 8000          # open http://localhost:8000
 
 # Real data (private use only)
-python scraper/crawl.py --db data/kyrktorget.db --max-pages 50   # quick test (~10 min)
-python scraper/crawl.py --db data/kyrktorget.db --skip-lists     # all ~5 000 parish pages (1-2 h, resumable)
-python scraper/normalize.py --db data/kyrktorget.db
+python scraper/crawl.py --db data/kyrktorget.db                  # 1. parish list + kyrktorget pages (1-2 h, resumable)
+python scraper/normalize.py --db data/kyrktorget.db              # 2. -> tables
+python scraper/crawl_websites.py --db data/kyrktorget.db         # 3. each parish's own website (resumable)
+python scraper/normalize_websites.py --db data/kyrktorget.db     # 4. newest info from the websites
 python site/build_site.py --db data/kyrktorget.db --out dist-private
 python -m http.server -d dist-private 8000                       # open http://localhost:8000
 ```
@@ -79,6 +80,15 @@ kyrktorget.se renders its pages on the server, and loads a few lists through int
 3. `/api/gmap/calmarkers` gives calendar events for the next 60 days.
 4. Each parish page (`/<shortname>` or `/church/<id>`) is parsed for denomination, description,
    activities, phone, e-mail, website, address and coordinates.
+
+### Parishes' own websites
+
+`crawl_websites.py` visits the website listed for each parish (home page, plus a contact page,
+a calendar page and iCal feeds when linked). It obeys each site's robots.txt, sends one request
+at a time per site with a pause in between, and skips social media pages.
+`normalize_websites.py` then reads schema.org data, iCal feeds, tel:/mailto: links and page
+descriptions. Website data is newer, so it replaces Kyrktorget's phone, e-mail, address and
+events where found. Staff names and photos are not collected.
 
 The crawl can be stopped (Ctrl+C) and started again: pages already saved are skipped.
 

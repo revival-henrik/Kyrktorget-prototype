@@ -30,6 +30,18 @@ CREATE TABLE IF NOT EXISTS raw_listings (
     fetched_at  TEXT NOT NULL
 );
 
+-- Pages fetched from the parishes' own websites (home, contact, calendar, iCal feeds).
+CREATE TABLE IF NOT EXISTS raw_sites (
+    url        TEXT PRIMARY KEY,
+    org_id     TEXT NOT NULL,
+    kind       TEXT,            -- 'home' | 'contact' | 'calendar' | 'ical' | 'error'
+    status     INTEGER,
+    final_url  TEXT,
+    body       TEXT,
+    fetched_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_raw_sites_org ON raw_sites(org_id);
+
 -- Normalised layer: what the website is built from.
 CREATE TABLE IF NOT EXISTS organizations (
     id           TEXT PRIMARY KEY,
