@@ -470,6 +470,7 @@ def main() -> None:
     args = ap.parse_args()
     con = sqlite3.connect(args.db)
     con.executescript((Path(__file__).resolve().parent.parent / "db" / "schema.sql").read_text(encoding="utf-8"))
+    con.execute("UPDATE organizations SET website=NULL")   # rebuilt below from all sources
     counts = {
         "listed": load_listings(con),
         "pages_parsed": load_pages(con),
