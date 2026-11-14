@@ -22,6 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
+      - name: Refuse to run in a public repository
+        if: ${{ !github.event.repository.private }}
+        run: |
+          echo "::error::This repository is public. Scraped data would be downloadable by others."
+          echo "::error::Run the scraper locally instead (see README), or make the repo private first."
+          exit 1
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
