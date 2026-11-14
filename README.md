@@ -112,6 +112,16 @@ matches the church: its name words, and its town, street, postal code or phone n
 with a similar name), skips ruins and other denominations, and gives each new church the nearest
 municipality/county and its parish's website when known.
 
+### Denominations (samfund)
+
+Every church is tagged with one or more denominations (`org_samfund`). `fetch_directories.py`
+downloads the directories of Equmeniakyrkan, Pingst, Alliansmissionen, EFK and Katolska kyrkan;
+`normalize.py` matches them by website, position + name, or town + name (never to a Svenska kyrkan
+church), corrects wrong positions and adds churches we lack. Everything else is decided by
+`scraper/samfund.py` from Kyrktorget's denomination, e-mail/website domains, the name and the
+church's own website. Independent churches are "Andra frikyrkor".
+Fix individual churches by hand in `data/overrides.csv`.
+
 ### Svenska kyrkan calendars
 
 Svenska kyrkan has no public calendar feed; events are loaded into each parish's calendar page

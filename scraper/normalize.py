@@ -14,6 +14,7 @@ import argparse
 import json
 import re
 import sqlite3
+import urllib.parse
 from collections import defaultdict
 from pathlib import Path
 
@@ -366,7 +367,8 @@ def load_calendar(con) -> int:
 
 
 STOP_WORDS = {"i", "och", "av", "på", "the", "församling", "församlingen", "församlingar", "kyrka", "kyrkan",
-              "kyrkor", "pastorat", "svenska", "kyrkans", "kapell", "kapellet", "s:t", "s:ta", "sankt", "sankta"}
+              "kyrkor", "pastorat", "svenska", "kyrkans", "kapell", "kapellet", "s:t", "s:ta", "sankt", "sankta",
+              "katolska", "katolsk", "av"}
 
 
 def name_tokens(s: str | None) -> set[str]:
@@ -528,6 +530,233 @@ def load_osm_svk_churches(con) -> int:
     return n
 
 
+# ------------------------------------------------------------------ denominations' own directories
+DIRECTORY_SAMFUND = {"equmeniakyrkan": "Equmeniakyrkan", "pingst": "Pingströrelsen",
+                     "alliansmissionen": "Alliansmissionen", "katolska": "Katolska kyrkan",
+                     "efk": "Evangeliska Frikyrkan"}
+
+
+def _raw_json_after(text: str, marker: str):
+    i = text.find(marker)
+    if i < 0:
+        return None
+    try:
+        return json.JSONDecoder().raw_decode(text[i + len(marker):].lstrip())[0]
+    except ValueError:
+        return None
+
+
+def _fnum(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_directories(con) -> list[dict]:
+    """Church lists from the denominations' websites (fetched by fetch_directories.py)."""
+    out: list[dict] = []
+    for page_url, url, body in con.execute("SELECT page_url, url, body FROM raw_api_responses "
+                                           "WHERE page_url LIKE 'dir:%' AND status=200"):
+        src = page_url[4:]
+        sf = DIRECTORY_SAMFUND.get(src)
+        if not sf or not body:
+            continue
+        if src == "equmeniakyrkan":
+            data = _raw_json_after(body, "window.FWP_JSON =") or {}
+            locs = (((data.get("preload_data") or {}).get("settings") or {}).get("map") or {}).get("locations") or []
+            for loc in locs:
+                s = BeautifulSoup(loc.get("content") or "", "html.parser")
+                labels = [x.get_text(strip=True).lower() for x in s.select(".label")]
+                if labels and "equmeniakyrkan" not in labels:
+                    continue       # youth/scout groups only
+                h = s.find(["h3", "h2"])
+                a = s.find("a", href=True)
+                pos = loc.get("position") or {}
+                out.append({"source": src, "samfund": sf, "name": clean(h.get_text()) if h else None,
+                            "lat": _fnum(pos.get("lat")), "lng": _fnum(pos.get("lng")),
+                            "street": clean((s.select_one(".street-address") or Tag(name="x")).get_text()),
+                            "city": clean((s.select_one(".city") or Tag(name="x")).get_text()),
+                            "website": None, "info_url": a["href"] if a else None})
+        elif src == "pingst":
+            try:
+                markers = json.loads(body).get("markers") or []
+            except ValueError:
+                markers = []
+            for m in markers:
+                parts = [p.strip() for p in (m.get("address") or "").split(",")]
+                link = (m.get("link") or "").strip()
+                if link and not link.startswith("http"):
+                    link = "https://" + link
+                out.append({"source": src, "samfund": sf, "name": clean(m.get("title")),
+                            "lat": _fnum(m.get("lat")), "lng": _fnum(m.get("lng")),
+                            "street": parts[0].title() if parts and parts[0] else None,
+                            "city": parts[-1].title() if len(parts) > 1 else None,
+                            "website": link if link and "kyrktorget" not in link else None, "info_url": None})
+        elif src == "alliansmissionen":
+            for m in _raw_json_after(body, "var mapdata =") or []:
+                name, _, town = (m.get("forsamling") or "").partition(",")
+                web = (m.get("webaddress") or "").strip()
+                if web and not web.startswith("http"):
+                    web = "https://" + web
+                out.append({"source": src, "samfund": sf, "name": clean(name), "lat": _fnum(m.get("lat")),
+                            "lng": _fnum(m.get("lon")), "street": None, "city": clean(town),
+                            "website": web or None, "info_url": None})
+        elif src == "efk":
+            s = BeautifulSoup(body, "html.parser")
+            for a in s.select("a.lp-banner"):
+                title = clean((a.select_one(".lp-banner__title") or Tag(name="x")).get_text())
+                if not title:
+                    continue
+                name, _, town = title.rpartition(",")
+                img = a.find("img", src=True)
+                m = re.search(r"center=(-?[\d.]+),(-?[\d.]+)", img["src"]) if img else None
+                out.append({"source": src, "samfund": sf, "name": clean(name) or title, "city": clean(town),
+                            "lat": float(m.group(1)) if m else None, "lng": float(m.group(2)) if m else None,
+                            "street": None, "website": None,
+                            "info_url": urllib.parse.urljoin("https://efk.se/", a["href"])})
+        elif src == "katolska":
+            text = BeautifulSoup(body, "html.parser").get_text("\n")
+            text = text.split("Församlingar i Stockholms katolska stift", 1)[-1]
+            for line in text.splitlines():
+                m = re.match(r"^\s*([A-ZÅÄÖ][\wåäöÅÄÖ\- ]{1,40}),\s*(.+?(församling|domkyrkoförsamling))\s*$", line)
+                if m:
+                    out.append({"source": src, "samfund": sf, "name": clean(m.group(2)),
+                                "city": clean(m.group(1).split("-")[0]), "lat": None, "lng": None,
+                                "street": None, "website": None, "info_url": None})
+    return [e for e in out if e.get("name")]
+
+
+def _street_key(s: str | None) -> str:
+    s = (s or "").lower()
+    for a, b in (("å", "a"), ("ä", "a"), ("ö", "o"), ("é", "e")):
+        s = s.replace(a, b)
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def load_directories(con) -> dict:
+    """Tag churches with the denomination whose directory lists them; add the ones we lack."""
+    entries = parse_directories(con)
+    con.execute("DELETE FROM org_samfund WHERE source='directory'")
+    con.execute("DELETE FROM organizations WHERE id LIKE 'dir-%'")
+    if not entries:
+        return {}
+    # Directory churches are never Svenska kyrkan churches: leave those out of the matching
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from samfund import classify
+    orgs = [o[:8] for o in con.execute(
+        "SELECT id, name, lat, lng, address, city, municipality, county, denomination, email, website "
+        "FROM organizations WHERE id NOT LIKE 'osm-%'").fetchall()
+        if "Svenska kyrkan" not in classify(o[8], o[1], o[9], o[10])[0]]
+    all_orgs = con.execute("SELECT id, name, lat, lng, address, city, municipality, county FROM organizations").fetchall()
+    def domain(u):
+        h = urllib.parse.urlparse(u or "").netloc.lower()
+        return h[4:] if h.startswith("www.") else h
+
+    grid, by_town, by_domain = defaultdict(list), defaultdict(list), defaultdict(list)
+    webs = {r[0]: r[1] for r in con.execute("SELECT id, website FROM organizations WHERE website IS NOT NULL")}
+    for o in orgs:
+        d = domain(webs.get(o[0]))
+        if d and d not in ("kyrktorget.se", "facebook.com", "svenskakyrkan.se"):
+            by_domain[d].append(o)
+        if o[2] is not None:
+            grid[(round(o[2], 2), round(o[3], 2))].append(o)
+        for t in (o[5], o[6]):
+            if t:
+                by_town[t.lower().strip()].append(o)
+
+    pairs = []
+    for i, e in enumerate(entries):
+        if e["lat"] is not None:
+            for dy in (-0.01, 0, 0.01):
+                for dx in (-0.01, 0, 0.01):
+                    for o in grid.get((round(e["lat"] + dy, 2), round(e["lng"] + dx, 2)), []):
+                        d = metres(e["lat"], e["lng"], o[2], o[3])
+                        sim = similarity(e["name"], o[1])
+                        same_street = bool(e["street"]) and _street_key(e["street"]) == _street_key(o[4])
+                        if d <= 300 and (sim >= 0.5 or same_street) or d <= 2000 and sim >= 0.99:
+                            pairs.append((sim + same_street - d / 1000, i, o[0]))
+        for o in by_domain.get(domain(e["website"]), []) if e["website"] else []:
+            pairs.append((3.0, i, o[0]))          # same website: certainly the same church
+        if e["lat"] is None or not any(p[1] == i for p in pairs[-200:]):
+            for o in by_town.get((e["city"] or "").lower().strip(), []):
+                sim = similarity(e["name"], o[1])
+                far = e["lat"] is not None and o[2] is not None and metres(e["lat"], e["lng"], o[2], o[3]) > 15_000
+                if sim >= 0.8 or (sim >= 0.6 and not far):
+                    pairs.append((sim - 0.5, i, o[0]))
+    used_e, used_o, matched = set(), set(), {}
+    for score, i, oid in sorted(pairs, reverse=True):
+        if i in used_e or oid in used_o:
+            continue
+        used_e.add(i)
+        used_o.add(oid)
+        matched[i] = oid
+
+    # the same church can be listed by two denominations (shared congregations): tag it twice
+    stats = {"directory_matched": 0, "directory_added": 0}
+    coarse = defaultdict(list)
+    for o in all_orgs:
+        if o[2] is not None and o[6]:
+            coarse[(round(o[2] * 5), round(o[3] * 5))].append(o)
+    for i, e in enumerate(entries):
+        oid = matched.get(i)
+        if oid:
+            stats["directory_matched"] += 1
+            if e["lat"] is not None:   # the denomination's own position is the more reliable one
+                cur = con.execute("UPDATE organizations SET lat=?, lng=? WHERE id=? AND (lat IS NULL OR "
+                                  "abs(lat-?) + abs(lng-?) > 0.05)", (e["lat"], e["lng"], oid, e["lat"], e["lng"]))
+                stats["positions_corrected"] = stats.get("positions_corrected", 0) + cur.rowcount
+        elif e["lat"] is not None:
+            oid = f"dir-{e['source']}-{i}"
+            near = None
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    for o in coarse.get((round(e["lat"] * 5) + dy, round(e["lng"] * 5) + dx), []):
+                        d = metres(e["lat"], e["lng"], o[2], o[3])
+                        if near is None or d < near[0]:
+                            near = (d, o[6], o[7])
+            con.execute(
+                "INSERT OR REPLACE INTO organizations(id,name,kind,denomination,address,city,municipality,county,"
+                "website,lat,lng,source_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (oid, e["name"], "Församling", e["samfund"], e["street"], e["city"] or (near[1] if near else None),
+                 near[1] if near else None, near[2] if near else None, e["website"], e["lat"], e["lng"],
+                 e["info_url"]))
+            stats["directory_added"] += 1
+        else:
+            continue
+        con.execute("INSERT OR REPLACE INTO org_samfund(org_id,samfund,source) VALUES (?,?,'directory')",
+                    (oid, e["samfund"]))
+        if e["website"]:
+            con.execute("UPDATE organizations SET website=? WHERE id=? AND website IS NULL", (e["website"], oid))
+    return stats
+
+
+def load_overrides(con) -> int:
+    """Hand-made corrections in data/overrides.csv (match = church id or exact name)."""
+    import csv
+    path = Path(__file__).resolve().parent.parent / "data" / "overrides.csv"
+    if not path.exists():
+        return 0
+    n = 0
+    with path.open(encoding="utf-8") as f:
+        for row in csv.DictReader(r for r in f if not r.startswith("#")):
+            key = (row.get("match") or "").strip()
+            if not key:
+                continue
+            ids = [r[0] for r in con.execute("SELECT id FROM organizations WHERE id=? OR name=?", (key, key))]
+            for oid in ids:
+                if (row.get("website") or "").strip():
+                    con.execute("UPDATE organizations SET website=? WHERE id=?", (row["website"].strip(), oid))
+                if (row.get("samfund") or "").strip():
+                    con.execute("DELETE FROM org_samfund WHERE org_id=?", (oid,))
+                    for sf in row["samfund"].split("|"):
+                        con.execute("INSERT OR REPLACE INTO org_samfund(org_id,samfund,source) VALUES (?,?,'directory')",
+                                    (oid, sf.strip()))
+                n += 1
+    return n
+
+
 def load_info_pages(con) -> int:
     n = 0
     for url, html in con.execute("SELECT url, html FROM raw_pages WHERE url LIKE '%/page/%' AND status=200").fetchall():
@@ -570,6 +799,8 @@ def main() -> None:
             " (SELECT org_id FROM raw_sites WHERE kind='found' AND final_url IS NOT NULL)").rowcount,
         "websites_from_openstreetmap": load_osm_websites(con),
         "svenska_kyrkan_churches_added_from_openstreetmap": load_osm_svk_churches(con),
+        **load_directories(con),
+        "overrides": load_overrides(con),
     }
     con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('dataset','kyrktorget')")
     con.commit()

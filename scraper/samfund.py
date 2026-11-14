@@ -29,7 +29,7 @@ FAMILIES: list[tuple[str, str, str, str | None, str | None]] = [
     ("Lutherska frikyrkor", r"lutherska bekännelse|lutherska konkordia|missionsprovinsen|evangelisk luthersk samling",
      r"lbk\.|missionsprovinsen", r"bekännelsekyrkan|konkordia", None),
 ]
-FREE_CHURCH = "Frikyrka (samfund okänt)"
+FREE_CHURCH = "Andra frikyrkor"     # independent churches, or free churches whose denomination is unknown
 ORDER = [f[0] for f in FAMILIES] + [FREE_CHURCH, "Övriga"]
 
 GENERIC_MAIL = re.compile(
@@ -60,7 +60,7 @@ def classify(denomination: str | None, name: str | None, email: str | None, webs
         if found:
             return found, "kyrktorget"
         if re.search(r"inget samfund|övriga", denom, re.I):
-            return ["Övriga"], "kyrktorget"
+            return [FREE_CHURCH], "kyrktorget"
 
     domains = " ".join(x for x in [(email or "").split("@")[-1], website or ""] if x).lower()
     if domains:

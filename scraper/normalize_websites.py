@@ -373,7 +373,14 @@ def load_samfund(con) -> dict:
     for oid, name, denom, email, website in con.execute(
             "SELECT id, name, denomination, email, website FROM organizations").fetchall():
         if oid in directory:
-            labels = directory[oid]
+            labels = list(directory[oid])
+            extra, how = classify(denom, name, email, website)
+            if how == "kyrktorget":
+                for label in extra:
+                    if label not in labels and label not in ("Andra frikyrkor", "Övriga"):
+                        labels.append(label)
+                        con.execute("INSERT OR REPLACE INTO org_samfund(org_id,samfund,source) VALUES (?,?,?)",
+                                    (oid, label, how))
         else:
             labels, how = classify(denom, name, email, website, texts.get(oid))
             for label in labels:

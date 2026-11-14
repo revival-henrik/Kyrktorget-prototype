@@ -20,7 +20,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 HERE = Path(__file__).resolve().parent
 SAMFUND_ORDER = ["Svenska kyrkan", "Katolska kyrkan", "Ortodoxa kyrkor", "EFS", "Equmeniakyrkan", "Pingströrelsen",
                  "Evangeliska Frikyrkan", "Alliansmissionen", "Frälsningsarmén", "ELM", "Laestadianer",
-                 "Adventistsamfundet", "Trosrörelsen", "Lutherska frikyrkor", "Frikyrka (samfund okänt)", "Övriga"]
+                 "Adventistsamfundet", "Trosrörelsen", "Lutherska frikyrkor", "Andra frikyrkor", "Övriga"]
 SITE_NAME = "Församlingsguiden"
 TAGLINE = "Konceptprototyp"
 
