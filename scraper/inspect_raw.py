@@ -9,6 +9,7 @@ import sys
 from collections import Counter
 
 con = sqlite3.connect(sys.argv[1] if len(sys.argv) > 1 else "data/kyrktorget.db")
+print("Municipality lists:", con.execute("SELECT COUNT(*) FROM raw_listings").fetchone()[0])
 print("Pages:", con.execute("SELECT COUNT(*) FROM raw_pages").fetchone()[0])
 print("JSON responses:", con.execute("SELECT COUNT(*) FROM raw_api_responses").fetchone()[0])
 print("\nJSON endpoints (path -> count, sample keys):")

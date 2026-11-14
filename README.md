@@ -55,10 +55,11 @@ python site/build_site.py --db data/sample.db --out dist
 python -m http.server -d dist 8000          # open http://localhost:8000
 
 # Real data (private use only)
-python scraper/crawl.py --db data/kyrktorget.db --max-pages 400
+python scraper/crawl.py --db data/kyrktorget.db --max-pages 50   # quick test (~10 min)
+python scraper/crawl.py --db data/kyrktorget.db --skip-lists     # all ~5 000 parish pages (1-2 h, resumable)
 python scraper/normalize.py --db data/kyrktorget.db
-python scraper/inspect_raw.py data/kyrktorget.db
 python site/build_site.py --db data/kyrktorget.db --out dist-private
+python -m http.server -d dist-private 8000                       # open http://localhost:8000
 ```
 
 ## Map
@@ -69,16 +70,17 @@ with SRI hashes) and OpenStreetMap tiles. Only organisations with `lat`/`lng` in
 appear on the map. If the scraped data has no coordinates, add them in `normalize.py`, either
 from the source data or by geocoding the addresses.
 
-## First scrape: tuning the field mapping
+## How the crawler gets the data
 
-The site loads its data with JavaScript, so the exact JSON field names are only known after
-the first crawl. Run the **Scrape (private)** workflow (Actions → Scrape → Run workflow),
-download `kyrktorget-data`, and read `scrape-summary.txt`. It lists every JSON endpoint and
-its field names. Add any names that are missing to `ALIASES` in `scraper/normalize.py`,
-then re-run `normalize.py`. No new crawl is needed, because the raw data is kept.
+kyrktorget.se renders its pages on the server, and loads a few lists through internal endpoints:
 
-If the parish list only appears after you pick a county and municipality, add those
-clicks to `auto_expand()` in `crawl.py`.
+1. `/api/filter?type=kommun&ids=<id>` lists every parish in each of ~290 municipalities.
+2. `/api/gmap/markers` gives coordinates for the map.
+3. `/api/gmap/calmarkers` gives calendar events for the next 60 days.
+4. Each parish page (`/<shortname>` or `/church/<id>`) is parsed for denomination, description,
+   activities, phone, e-mail, website, address and coordinates.
+
+The crawl can be stopped (Ctrl+C) and started again: pages already saved are skipped.
 
 ## GitHub Pages
 

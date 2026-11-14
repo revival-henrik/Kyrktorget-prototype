@@ -89,6 +89,7 @@ def build(db: Path, out: Path) -> None:
 
     env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]))
     env.filters["sv_date"] = sv_date
+    env.filters["phone_number"] = lambda s: (re.search(r"\+?\d[\d \-]{5,}\d", s or "") or [""])[0]
     common = {
         "site_name": SITE_NAME,
         "tagline": TAGLINE,

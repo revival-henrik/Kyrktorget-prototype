@@ -1,68 +1,48 @@
 """Polite crawler for kyrktorget.se.
 
-The site renders most of its content with JavaScript, so a headless browser
-(Playwright/Chromium) is used. For every page we store:
-  * the rendered HTML and visible text  -> raw_pages
-  * every JSON response the page loads  -> raw_api_responses
-The JSON responses usually contain the real data (parishes, events, jobs) and
-are turned into clean tables by normalize.py.
+How kyrktorget.se works (found by inspecting the site):
+  * /filter lists 27 counties and ~290 municipalities. POST /api/filter?type=kommun&ids=<id>
+    returns every parish in a municipality as JSON (id, title, shortname, customer).
+  * POST /api/gmap/markers returns map markers (with coordinates) inside a bounding box.
+  * POST /api/gmap/calmarkers returns calendar events for a date range.
+  * Parish pages are plain server-rendered HTML: /<shortname> for member parishes and
+    /church/<id> for the others.
+
+The crawl runs in steps and can be stopped and restarted: pages that are already in the
+database are skipped, so running it again continues where it stopped.
 
 Usage:
-    python scraper/crawl.py --db data/kyrktorget.db [--max-pages 400] [--delay 2.5]
+    python scraper/crawl.py --db data/kyrktorget.db                 # everything
+    python scraper/crawl.py --db data/kyrktorget.db --max-pages 50  # quick test
 """
 from __future__ import annotations
 
 import argparse
-import asyncio
 import datetime as dt
+import json
+import re
 import sqlite3
 import sys
-import urllib.parse
-import urllib.robotparser
-from collections import deque
+import time
 from pathlib import Path
 
-from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
 BASE = "https://kyrktorget.se"
-HOST = urllib.parse.urlparse(BASE).netloc
-SEEDS = [
-    BASE + "/",
-    BASE + "/filter",
-    BASE + "/kalender",
-    BASE + "/jobb",
-    BASE + "/andrum",
-    BASE + "/tv",
-    BASE + "/page/appen",
-    BASE + "/page/sondagskola-play",
-    BASE + "/page/smarta-inkop",
-    BASE + "/page/gdpr",
-    BASE + "/page/om-kyrktorget",
-    BASE + "/page/sa-funkar-det",
-    BASE + "/page/kontakta-kyrktorget",
-]
-# Never touch account pages or anything that changes state.
-SKIP_PREFIXES = ("/login", "/logout", "/new_user", "/register", "/password", "/admin", "/user")
-SKIP_EXT = (".pdf", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".mp4", ".mp3", ".zip", ".ics")
+INFO_PAGES = ["appen", "sondagskola-play", "smarta-inkop", "gdpr", "om-kyrktorget",
+              "sa-funkar-det", "kontakta-kyrktorget"]
+# Bounding box covering Sweden, Finland and Åland
+BBOX = {"_b_lat_min": 54.0, "_b_lat_max": 71.5, "_b_lng_min": 4.0, "_b_lng_max": 32.0}
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; kyrktorget-prototype-crawler/0.1; "
-    "+https://github.com/revival-henrik/Kyrktorget-prototype)"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/130.0 Safari/537.36 kyrktorget-prototype-crawler/0.2"
 )
 SCHEMA = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
 
 
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-
-
-def normalise_url(url: str) -> str | None:
-    p = urllib.parse.urlparse(url)
-    if p.scheme not in ("http", "https") or p.netloc not in (HOST, "www." + HOST):
-        return None
-    path = p.path or "/"
-    if path.startswith(SKIP_PREFIXES) or path.lower().endswith(SKIP_EXT):
-        return None
-    return urllib.parse.urlunparse(("https", HOST, path, "", p.query, ""))
 
 
 def open_db(path: Path) -> sqlite3.Connection:
@@ -72,115 +52,186 @@ def open_db(path: Path) -> sqlite3.Connection:
     return con
 
 
-def load_robots() -> urllib.robotparser.RobotFileParser:
-    rp = urllib.robotparser.RobotFileParser(BASE + "/robots.txt")
-    try:
-        rp.read()
-    except Exception as exc:  # robots.txt missing/unreachable -> be conservative but continue
-        print(f"[warn] could not read robots.txt: {exc}", file=sys.stderr)
-        rp.parse([])
-    return rp
-
-
-async def crawl(db_path: Path, max_pages: int, delay: float) -> None:
-    con = open_db(db_path)
-    robots = load_robots()
-    queue: deque[str] = deque(SEEDS)
-    seen: set[str] = set(SEEDS)
-    count = 0
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch()
-        context = await browser.new_context(user_agent=USER_AGENT, locale="sv-SE")
-        page = await context.new_page()
-
-        current = {"url": None}
-
-        async def on_response(resp):
-            ctype = resp.headers.get("content-type", "")
-            if "json" not in ctype:
-                return
-            if urllib.parse.urlparse(resp.url).netloc not in (HOST, "www." + HOST):
-                return
-            try:
-                body = await resp.text()
-            except Exception:
-                return
-            con.execute(
-                "INSERT OR IGNORE INTO raw_api_responses(page_url,url,method,status,content_type,body,fetched_at)"
-                " VALUES (?,?,?,?,?,?,?)",
-                (current["url"], resp.url, resp.request.method, resp.status, ctype, body, now()),
-            )
-
-        page.on("response", on_response)
-
-        while queue and count < max_pages:
-            url = queue.popleft()
-            if not robots.can_fetch(USER_AGENT, url):
-                print(f"[robots] skip {url}")
-                continue
-            current["url"] = url
-            try:
-                resp = await page.goto(url, wait_until="networkidle", timeout=45_000)
-                status = resp.status if resp else None
-                await auto_expand(page)
-                html = await page.content()
-                title = await page.title()
-                text = await page.inner_text("body")
-                hrefs = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
-            except Exception as exc:
-                print(f"[error] {url}: {exc}", file=sys.stderr)
-                await asyncio.sleep(delay)
-                continue
-
-            con.execute(
-                "INSERT OR REPLACE INTO raw_pages(url,status,title,text,html,fetched_at) VALUES (?,?,?,?,?,?)",
-                (url, status, title, text, html, now()),
-            )
-            con.commit()
-            count += 1
-            print(f"[{count}/{max_pages}] {status} {url}")
-
-            for href in hrefs:
-                n = normalise_url(href)
-                if n and n not in seen:
-                    seen.add(n)
-                    queue.append(n)
-            await asyncio.sleep(delay)
-
-        await browser.close()
-
-    con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('crawled_at', ?)", (now(),))
+def save_page(con, url: str, status: int, html: str) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    for t in soup(["script", "style", "noscript"]):
+        t.decompose()
+    title = soup.title.get_text(strip=True) if soup.title else ""
+    text = soup.get_text("\n", strip=True)
+    con.execute(
+        "INSERT OR REPLACE INTO raw_pages(url,status,title,text,html,fetched_at) VALUES (?,?,?,?,?,?)",
+        (url, status, title, text, html, now()),
+    )
     con.commit()
-    con.close()
-    print(f"Done: {count} pages crawled into {db_path}")
 
 
-async def auto_expand(page) -> None:
-    """Click harmless 'show more' style buttons so lazy-loaded lists appear."""
-    labels = ["Visa fler", "Visa mer", "Ladda fler", "Fler"]
-    for _ in range(10):
-        clicked = False
-        for label in labels:
-            btn = page.get_by_role("button", name=label)
-            try:
-                if await btn.count() and await btn.first.is_visible():
-                    await btn.first.click(timeout=2_000)
-                    await page.wait_for_load_state("networkidle", timeout=10_000)
-                    clicked = True
-            except Exception:
-                pass
-        if not clicked:
-            return
+def save_api(con, url: str, method: str, status: int, body: str, note: str = "") -> None:
+    con.execute(
+        "INSERT OR IGNORE INTO raw_api_responses(page_url,url,method,status,content_type,body,fetched_at)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (note, url, method, status, "application/json", body, now()),
+    )
+    con.commit()
+
+
+class Site:
+    """Thin wrapper around Playwright's HTTP client (shares cookies with a real browser)."""
+
+    def __init__(self, pw, delay: float):
+        self.browser = pw.chromium.launch()
+        self.context = self.browser.new_context(user_agent=USER_AGENT, locale="sv-SE")
+        self.page = self.context.new_page()
+        self.delay = delay
+        self.token = ""
+
+    def open(self, path: str) -> str:
+        """Load a page in the browser (sets session cookies) and remember its CSRF token."""
+        self.page.goto(BASE + path, wait_until="domcontentloaded", timeout=60_000)
+        token = self.page.locator('meta[name="csrf-token"]').get_attribute("content")
+        self.token = token or self.token
+        return self.page.content()
+
+    def get(self, path: str):
+        time.sleep(self.delay)
+        r = self.context.request.get(BASE + path, timeout=60_000)
+        return r.status, r.text()
+
+    def post(self, path: str, form: dict):
+        time.sleep(self.delay)
+        r = self.context.request.post(
+            BASE + path,
+            form={**form, "_token": self.token},
+            headers={"X-CSRF-TOKEN": self.token, "X-Requested-With": "XMLHttpRequest",
+                     "Referer": BASE + "/"},
+            timeout=60_000,
+        )
+        return r.status, r.text()
+
+    def close(self):
+        self.browser.close()
+
+
+def step_listings(site: Site, con) -> None:
+    print("\n[1/4] Listing all parishes per municipality …")
+    html = site.open("/filter")
+    save_page(con, BASE + "/filter", 200, html)
+    soup = BeautifulSoup(html, "html.parser")
+    regions = {}
+    for a in soup.select("[id^=btnRegion]"):
+        regions[a["id"].replace("btnRegion", "")] = a.get_text(strip=True)
+    kommuner = []
+    for a in soup.select("[id^=btnKommun]"):
+        kid = int(a["id"].replace("btnKommun", ""))
+        holder = a.find_parent(class_="kommunBtn")
+        cls = " ".join(holder.get("class", [])) if holder else ""
+        m = re.search(r"region(\d+)", cls)
+        kommuner.append((kid, a.get_text(strip=True), regions.get(m.group(1)) if m else None))
+    done = {r[0] for r in con.execute("SELECT kommun_id FROM raw_listings")}
+    todo = [k for k in kommuner if k[0] not in done]
+    print(f"  {len(kommuner)} municipalities, {len(todo)} left to fetch")
+    for i, (kid, name, lan) in enumerate(todo, 1):
+        status, body = site.post(f"/api/filter?type=kommun&ids={kid},", {})
+        if status != 200:
+            print(f"  [warn] {name}: HTTP {status}", file=sys.stderr)
+            continue
+        con.execute("INSERT OR REPLACE INTO raw_listings VALUES (?,?,?,?,?)", (kid, name, lan, body, now()))
+        con.commit()
+        try:
+            n = len(json.loads(body))
+        except ValueError:
+            n = "?"
+        print(f"  [{i}/{len(todo)}] {name} ({lan}): {n}")
+
+
+def step_markers(site: Site, con) -> None:
+    print("\n[2/4] Map markers (coordinates) …")
+    site.open("/")
+    status, body = site.post("/api/gmap/markers", {**BBOX, "_str": "0", "_strtext": ""})
+    save_api(con, BASE + "/api/gmap/markers", "POST", status, body, "all-markers")
+    try:
+        print(f"  {len(json.loads(body).get('result', []))} markers")
+    except (ValueError, AttributeError):
+        print(f"  HTTP {status}, could not parse response")
+
+
+def step_calendar(site: Site, con, days: int) -> None:
+    print("\n[3/4] Calendar …")
+    site.open("/kalender")
+    start = dt.date.today()
+    stop = start + dt.timedelta(days=days)
+    status, body = site.post("/api/gmap/calmarkers", {
+        **BBOX, "_str": "0", "_timestart": start.isoformat(), "_timestop": stop.isoformat(), "_ort": "",
+    })
+    save_api(con, BASE + "/api/gmap/calmarkers", "POST", status, body, f"calendar {start}..{stop}")
+    try:
+        print(f"  {len(json.loads(body).get('result2', []))} events")
+    except (ValueError, AttributeError):
+        print(f"  HTTP {status}, could not parse response")
+
+
+def parish_paths(con) -> list[str]:
+    paths = []
+    for (body,) in con.execute("SELECT body FROM raw_listings"):
+        try:
+            items = json.loads(body)
+        except ValueError:
+            continue
+        for o in items:
+            if str(o.get("customer")) == "1" and o.get("shortname"):
+                paths.append((0, "/" + o["shortname"]))
+            elif o.get("id"):
+                paths.append((1, f"/church/{o['id']}"))
+    seen, out = set(), []
+    for _, p in sorted(paths):          # member parishes (richer pages) first
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def step_pages(site: Site, con, max_pages: int) -> None:
+    print("\n[4/4] Parish pages and info pages …")
+    have = {r[0] for r in con.execute("SELECT url FROM raw_pages")}
+    paths = ["/page/" + s for s in INFO_PAGES] + parish_paths(con)
+    todo = [p for p in paths if BASE + p not in have]
+    if max_pages:
+        todo = todo[:max_pages]
+    print(f"  {len(paths)} pages known, {len(todo)} to fetch now")
+    for i, path in enumerate(todo, 1):
+        try:
+            status, html = site.get(path)
+        except Exception as exc:
+            print(f"  [error] {path}: {exc}", file=sys.stderr)
+            continue
+        save_page(con, BASE + path, status, html)
+        if i % 25 == 0 or i == len(todo):
+            print(f"  [{i}/{len(todo)}] {path}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="data/kyrktorget.db", type=Path)
-    ap.add_argument("--max-pages", default=400, type=int)
-    ap.add_argument("--delay", default=2.5, type=float, help="seconds between page loads")
+    ap.add_argument("--max-pages", default=0, type=int, help="max parish pages this run (0 = all)")
+    ap.add_argument("--delay", default=1.0, type=float, help="seconds between requests")
+    ap.add_argument("--calendar-days", default=60, type=int)
+    ap.add_argument("--skip-lists", action="store_true", help="only fetch pages (lists already done)")
     args = ap.parse_args()
-    asyncio.run(crawl(args.db, args.max_pages, args.delay))
+
+    con = open_db(args.db)
+    with sync_playwright() as pw:
+        site = Site(pw, args.delay)
+        try:
+            if not args.skip_lists:
+                step_listings(site, con)
+                step_markers(site, con)
+                step_calendar(site, con, args.calendar_days)
+            step_pages(site, con, args.max_pages)
+        finally:
+            site.close()
+    con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('crawled_at', ?)", (now(),))
+    con.commit()
+    con.close()
+    print("\nDone. Next: python scraper/normalize.py --db", args.db)
 
 
 if __name__ == "__main__":

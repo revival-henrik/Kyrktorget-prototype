@@ -11,7 +11,7 @@
 
   <div class="detail-grid">
     <div>
-      {% if org.description %}<div class="prose"><p>{{ org.description }}</p></div>{% endif %}
+      {% if org.description %}<div class="prose">{% for para in org.description.split('\n\n') %}<p>{{ para|replace('\n', ' ') }}</p>{% endfor %}</div>{% endif %}
 
       {% if org.activities %}
       <h2>Verksamhet</h2>
@@ -37,11 +37,13 @@
       <h2>Kontakt</h2>
       <dl>
         {% if org.address %}<dt>Adress</dt><dd>{{ org.address }}{% if org.postal_code or org.city %}<br>{{ org.postal_code or '' }} {{ org.city or '' }}{% endif %}</dd>{% endif %}
-        {% if org.phone %}<dt>Telefon</dt><dd><a href="tel:{{ org.phone|replace(' ', '') }}">{{ org.phone }}</a></dd>{% endif %}
+        {% if org.phone %}<dt>Telefon</dt><dd class="phones">{% for p in org.phone.split('; ') %}{% set num = p|phone_number %}<span>{% if num %}{{ p[:p.find(num)] }}<a href="tel:{{ num|replace(' ', '')|replace('-', '') }}">{{ num }}</a>{% else %}{{ p }}{% endif %}</span>{% endfor %}</dd>{% endif %}
         {% if org.email %}<dt>E-post</dt><dd><a href="mailto:{{ org.email }}">{{ org.email }}</a></dd>{% endif %}
         {% if org.website %}<dt>Webbplats</dt><dd><a href="{{ org.website }}" rel="noopener">{{ org.website|replace('https://','')|replace('http://','') }}</a></dd>{% endif %}
       </dl>
-      {% if org.address and org.city %}
+      {% if org.lat is not none and org.lng is not none %}
+      <a class="button" href="https://www.openstreetmap.org/?mlat={{ org.lat }}&amp;mlon={{ org.lng }}#map=16/{{ org.lat }}/{{ org.lng }}" rel="noopener">Visa på karta</a>
+      {% elif org.address and org.city %}
       <a class="button" href="https://www.openstreetmap.org/search?query={{ (org.address ~ ', ' ~ org.city)|urlencode }}" rel="noopener">Visa på karta</a>
       {% endif %}
     </aside>

@@ -21,6 +21,15 @@ CREATE TABLE IF NOT EXISTS raw_api_responses (
     UNIQUE (url, method, body)
 );
 
+-- One row per municipality: the JSON list kyrktorget.se returns for it.
+CREATE TABLE IF NOT EXISTS raw_listings (
+    kommun_id   INTEGER PRIMARY KEY,
+    kommun      TEXT,
+    lan         TEXT,
+    body        TEXT,
+    fetched_at  TEXT NOT NULL
+);
+
 -- Normalised layer: what the website is built from.
 CREATE TABLE IF NOT EXISTS organizations (
     id           TEXT PRIMARY KEY,
