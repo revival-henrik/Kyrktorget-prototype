@@ -69,6 +69,9 @@ def load(db: Path) -> dict:
     by_id = {o["id"]: o for o in orgs}
     events = q("SELECT * FROM events ORDER BY starts_at")
     for e in events:
+        # "11.00 Gudstjänst" -> "Gudstjänst" (the time is shown separately)
+        e["title"] = re.sub(r"^\s*(kl\.?\s*)?\d{1,2}[.:]\d{2}(\s*[-–]\s*\d{1,2}[.:]\d{2})?\s*[-–:,]?\s*", "",
+                            e["title"] or "", flags=re.I) or e["title"]
         e["org"] = by_id.get(e.get("org_id"))
         e["date_label"] = sv_date(e["starts_at"], with_time=False)
         d = parse_dt(e["starts_at"])

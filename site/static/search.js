@@ -49,7 +49,7 @@
   // ---------- Map ----------
   function ensureMap() {
     if (map || !window.L) return map;
-    map = L.map("map", { scrollWheelZoom: false, zoomControl: true }).setView([62.5, 16.5], 5);
+    map = L.map("map", { scrollWheelZoom: false, zoomControl: true, preferCanvas: true }).setView([62.5, 16.5], 5);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 18,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',

@@ -132,6 +132,9 @@ def parse_parish(html: str) -> dict:
             emails = [x for x in sec.get("EPOST", []) if "@" in x]
             if emails:
                 d["email"] = emails[0]
+            a = panel.find("a", href=re.compile(r"/redirect/\d+"))
+            if a:
+                d["website_redirect"] = BASE + a["href"] if a["href"].startswith("/") else a["href"]
             if sec.get("WEBB"):
                 w = sec["WEBB"][0]
                 if re.match(r"^(https?://)?[\w.-]+\.[a-z]{2,}(/\S*)?$", w, re.I):
@@ -196,7 +199,18 @@ def load_listings(con) -> int:
     return n
 
 
+def org_id_from_path(path: str | None) -> str | None:
+    """'/church/2522' -> 'church-2522', '/silbodal' or 'bodakyrkan/kalender' -> first part."""
+    p = (path or "").strip().strip("/")
+    if not p:
+        return None
+    if p.startswith("church/"):
+        return "church-" + p.split("/")[1]
+    return p.split("/")[0]
+
+
 def load_markers(con) -> int:
+    """Coordinates for every church building on kyrktorget's map. The first building wins."""
     row = con.execute("SELECT body FROM raw_api_responses WHERE url LIKE '%/api/gmap/markers' "
                       "ORDER BY id DESC LIMIT 1").fetchone()
     if not row:
@@ -206,27 +220,30 @@ def load_markers(con) -> int:
     except (ValueError, AttributeError):
         return 0
     items = result.values() if isinstance(result, dict) else result
+    known = {r[0] for r in con.execute("SELECT id FROM organizations")}
     n = 0
     for p in items:
         try:
             lat, lng = float(p.get("lat")), float(p.get("lng"))
         except (TypeError, ValueError):
             continue
-        if p.get("shortname"):
-            cur = con.execute("UPDATE organizations SET lat=COALESCE(lat,?), lng=COALESCE(lng,?) WHERE id=?",
-                              (lat, lng, p["shortname"]))
-        elif p.get("id") is not None:
-            cur = con.execute("UPDATE organizations SET lat=COALESCE(lat,?), lng=COALESCE(lng,?) WHERE id=?",
-                              (lat, lng, f"church-{p['id']}"))
-        else:
-            cur = con.execute("UPDATE organizations SET lat=COALESCE(lat,?), lng=COALESCE(lng,?) "
-                              "WHERE lat IS NULL AND name=?", (lat, lng, clean(p.get("title"))))
+        candidates = [org_id_from_path(p.get("shortname"))]
+        if p.get("id") is not None:
+            candidates.append(f"church-{p['id']}")
+        oid = next((c for c in candidates if c in known), None)
+        if not oid:
+            continue
+        cur = con.execute("UPDATE organizations SET lat=?, lng=? WHERE id=? AND lat IS NULL", (lat, lng, oid))
         n += cur.rowcount
     return n
 
 
 def load_pages(con) -> int:
     n = 0
+    # Real addresses behind kyrktorget.se/redirect/<id> links (resolved by crawl.py step 5)
+    resolved = {re.sub(r"^https?://(www\.)?", "", u): t for u, t in con.execute(
+        "SELECT url, final_url FROM raw_sites WHERE kind='redirect' AND final_url IS NOT NULL")}
+    con.execute("UPDATE organizations SET website=NULL WHERE website LIKE '%kyrktorget.se/redirect/%'")
     rows = con.execute("SELECT url, html FROM raw_pages WHERE status=200").fetchall()
     for url, html in rows:
         oid = org_id_from_url(url)
@@ -235,6 +252,11 @@ def load_pages(con) -> int:
         d = parse_parish(html or "")
         if not d.get("name"):
             continue
+        real = resolved.get(re.sub(r"^https?://(www\.)?", "", d.get("website_redirect") or ""))
+        if real:
+            d["website"] = real
+        elif "/redirect/" in (d.get("website") or ""):
+            d["website"] = None   # unresolved: keep any address we already have rather than a redirect
         con.execute(
             "INSERT INTO organizations(id,name,kind,source_url) VALUES (?,?,?,?) ON CONFLICT(id) DO NOTHING",
             (oid, d["name"], "Församling", url),
@@ -262,27 +284,32 @@ def load_calendar(con) -> int:
     if not row:
         return 0
     try:
-        result = json.loads(row[0]).get("result2", [])
-    except (ValueError, AttributeError):
+        data = json.loads(row[0])
+    except ValueError:
         return 0
+    result = data.get("result2") or data.get("result") or []
     items = result.values() if isinstance(result, dict) else result
-    con.execute("DELETE FROM events")
+    known = {r[0]: r[1] for r in con.execute("SELECT id, city FROM organizations")}
+    by_name = {r[1]: r[0] for r in con.execute("SELECT id, name FROM organizations")}
+    con.execute("DELETE FROM events WHERE id NOT LIKE 'site-%'")
     n = 0
     for i, e in enumerate(items):
-        title = clean(e.get("cal_title")) or clean(e.get("name"))
+        title = clean(e.get("cal_title"))
         if not title:
             continue
-        org = e.get("shortname") or None
-        if org and not con.execute("SELECT 1 FROM organizations WHERE id=?", (org,)).fetchone():
-            org = None
-        city = con.execute("SELECT city FROM organizations WHERE id=?", (org,)).fetchone() if org else None
+        org = org_id_from_path(e.get("shortname"))
+        if org not in known:
+            org = f"church-{e['id']}" if f"church-{e.get('id')}" in known else by_name.get(clean(e.get("name")))
+        start = clean(e.get("timestart"))
+        if start and start.endswith(" 00:00"):
+            start = start[:10]          # all-day event
+        place = clean(e.get("title"))
         con.execute(
             "INSERT OR REPLACE INTO events(id,org_id,title,starts_at,location,city,category,description,source_url)"
             " VALUES (?,?,?,?,?,?,?,?,?)",
-            (str(e.get("id") or f"cal-{i}"), org, title, clean(e.get("timestart")),
-             clean(e.get("title")), city[0] if city else None, clean(e.get("category")),
-             clean(e.get("name")) if e.get("name") != title else None,
-             f"{BASE}/{e['shortname']}" if e.get("shortname") else None),
+            (f"kt-{e.get('event_id') or i}", org, title, start,
+             place if place != clean(e.get("name")) else None, known.get(org), None, None,
+             f"{BASE}/{e['shortname'].strip('/')}" if e.get("shortname") else None),
         )
         n += 1
     return n

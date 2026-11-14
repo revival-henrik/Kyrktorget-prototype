@@ -107,12 +107,27 @@ class Site:
         )
         return r.status, r.text()
 
+    def resolve(self, path: str) -> str | None:
+        """Where does a kyrktorget.se/redirect/<id> link lead? Reads the redirect without following it."""
+        time.sleep(self.delay)
+        r = self.context.request.get(BASE + path, timeout=30_000, max_redirects=0)
+        loc = r.headers.get("location")
+        if loc:
+            return loc if loc.startswith("http") else None
+        if r.status == 200:  # some sites redirect with a meta refresh or a script instead
+            html = r.text()
+            m = (re.search(r'http-equiv=["\']?refresh["\']?[^>]*url=([^"\'>\s]+)', html, re.I)
+                 or re.search(r'(?:window\.)?location(?:\.href)?\s*=\s*["\'](https?://[^"\']+)', html))
+            if m and "kyrktorget.se" not in m.group(1):
+                return m.group(1)
+        return None
+
     def close(self):
         self.browser.close()
 
 
 def step_listings(site: Site, con) -> None:
-    print("\n[1/4] Listing all parishes per municipality …")
+    print("\n[1/5] Listing all parishes per municipality …")
     html = site.open("/filter")
     save_page(con, BASE + "/filter", 200, html)
     soup = BeautifulSoup(html, "html.parser")
@@ -144,7 +159,7 @@ def step_listings(site: Site, con) -> None:
 
 
 def step_markers(site: Site, con) -> None:
-    print("\n[2/4] Map markers (coordinates) …")
+    print("\n[2/5] Map markers (coordinates) …")
     site.open("/")
     status, body = site.post("/api/gmap/markers", {**BBOX, "_str": "0", "_strtext": ""})
     save_api(con, BASE + "/api/gmap/markers", "POST", status, body, "all-markers")
@@ -155,7 +170,7 @@ def step_markers(site: Site, con) -> None:
 
 
 def step_calendar(site: Site, con, days: int) -> None:
-    print("\n[3/4] Calendar …")
+    print("\n[3/5] Calendar …")
     site.open("/kalender")
     start = dt.date.today()
     stop = start + dt.timedelta(days=days)
@@ -190,7 +205,7 @@ def parish_paths(con) -> list[str]:
 
 
 def step_pages(site: Site, con, max_pages: int) -> None:
-    print("\n[4/4] Parish pages and info pages …")
+    print("\n[4/5] Parish pages and info pages …")
     have = {r[0] for r in con.execute("SELECT url FROM raw_pages")}
     paths = ["/page/" + s for s in INFO_PAGES] + parish_paths(con)
     todo = [p for p in paths if BASE + p not in have]
@@ -206,6 +221,32 @@ def step_pages(site: Site, con, max_pages: int) -> None:
         save_page(con, BASE + path, status, html)
         if i % 25 == 0 or i == len(todo):
             print(f"  [{i}/{len(todo)}] {path}")
+
+
+REDIRECT_RE = re.compile(r'href=["\']((?:https?://(?:www\.)?kyrktorget\.se)?/redirect/\d+)["\']', re.I)
+
+
+def step_redirects(site: Site, con) -> None:
+    """Turn every kyrktorget.se/redirect/<id> website link into the church's real address."""
+    print("\n[5/5] Resolving website links to the churches' real addresses …")
+    links = set()
+    for (html,) in con.execute("SELECT html FROM raw_pages WHERE html LIKE '%/redirect/%'"):
+        for m in REDIRECT_RE.finditer(html or ""):
+            links.add(re.sub(r"^https?://(www\.)?kyrktorget\.se", "", m.group(1)))
+    done = {r[0] for r in con.execute("SELECT url FROM raw_sites WHERE kind='redirect'")}
+    todo = sorted(p for p in links if BASE + p not in done)
+    print(f"  {len(links)} links, {len(todo)} to resolve")
+    for i, path in enumerate(todo, 1):
+        try:
+            target = site.resolve(path)
+        except Exception as exc:
+            print(f"  [error] {path}: {exc}", file=sys.stderr)
+            continue
+        con.execute("INSERT OR REPLACE INTO raw_sites(url,org_id,kind,status,final_url,body,fetched_at)"
+                    " VALUES (?,?,?,?,?,?,?)", (BASE + path, "", "redirect", 200 if target else 404, target, None, now()))
+        con.commit()
+        if i % 25 == 0 or i == len(todo):
+            print(f"  [{i}/{len(todo)}] {path} -> {target}")
 
 
 def main() -> None:
@@ -226,6 +267,7 @@ def main() -> None:
                 step_markers(site, con)
                 step_calendar(site, con, args.calendar_days)
             step_pages(site, con, args.max_pages)
+            step_redirects(site, con)
         finally:
             site.close()
     con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('crawled_at', ?)", (now(),))
