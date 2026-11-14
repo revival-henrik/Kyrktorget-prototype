@@ -7,7 +7,8 @@
 #
 # Optional settings go in a file called .env next to this script (never uploaded to GitHub):
 #   BRAVE_API_KEY=your-key        enables web search for missing websites
-#   SEARCH_MAX=900                max churches to search per run (900 ≈ Brave's free monthly credit)
+#   MAX_SEARCHES=20               max web searches per run (default 20 while developing;
+#                                 900 ≈ Brave's free monthly credit, 0 = no limit)
 #   PORT=8000                     port for the local website
 
 set -e
@@ -19,7 +20,7 @@ step() { printf "\n\033[1;32m==> %s\033[0m\n" "$1"; }
 # --- settings -------------------------------------------------------------
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 PORT="${PORT:-8000}"
-SEARCH_MAX="${SEARCH_MAX:-900}"
+MAX_SEARCHES="${MAX_SEARCHES:-20}"
 
 # --- Python environment (created automatically the first time) ------------
 if [ ! -d .venv ]; then
@@ -59,7 +60,7 @@ if [ "$MODE" = "update" ] || [ "$MODE" = "full" ]; then
   python scraper/normalize.py --db "$DB"
   step "3/5 Finding missing websites"
   python scraper/find_websites.py --db "$DB" --recheck
-  $KEEP_AWAKE python scraper/find_websites.py --db "$DB" --max "$SEARCH_MAX"
+  $KEEP_AWAKE python scraper/find_websites.py --db "$DB" --max-searches "$MAX_SEARCHES"
   python scraper/normalize.py --db "$DB"
   step "4/5 Reading the churches' own websites"
   $KEEP_AWAKE python scraper/crawl_websites.py --db "$DB"

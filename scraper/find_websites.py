@@ -200,19 +200,24 @@ def homepage(url: str) -> str:
     return f"{p.scheme}://{p.netloc}/"
 
 
-async def run(db: Path, limit: int, workers: int, delay: float, use_search: bool) -> None:
+async def run(db: Path, limit: int, workers: int, delay: float, use_search: bool, max_searches: int) -> None:
     con = sqlite3.connect(db)
     con.executescript(SCHEMA.read_text(encoding="utf-8"))
-    tried = {r[0] for r in con.execute("SELECT DISTINCT org_id FROM raw_sites WHERE kind IN ('found','notfound')")}
+    key = os.environ.get("BRAVE_API_KEY", "").strip() if use_search else ""
+    # Churches not found by the free methods are tried again later with web search, while budget remains
+    tried = {r[0] for r in con.execute(
+        "SELECT DISTINCT org_id FROM raw_sites WHERE kind='found' OR (kind='notfound' AND (body<>'no-search' OR ?))",
+        (0 if key else 1,))}
     rows = [r for r in con.execute(
         "SELECT id, name, email, city, municipality, address, postal_code, phone, denomination FROM organizations "
         "WHERE website IS NULL ORDER BY id").fetchall()
         if r[0] not in tried]
     if limit:
         rows = rows[:limit]
-    key = os.environ.get("BRAVE_API_KEY", "").strip() if use_search else ""
     print(f"{len(rows)} churches without a website to look for"
-          f" ({'with' if key else 'without'} web search{'' if key else '; set BRAVE_API_KEY to enable'})")
+          f" ({'with' if key else 'without'} web search{'' if key else '; set BRAVE_API_KEY to enable'}"
+          f"{f', at most {max_searches} searches' if key and max_searches else ''})")
+    budget = {"left": max_searches if max_searches else 10**9, "used": 0}
     stats = {"found_email": 0, "found_svk": 0, "found_search": 0, "not_found": 0, "errors": 0}
 
     async with async_playwright() as pw:
@@ -272,7 +277,11 @@ async def run(db: Path, limit: int, workers: int, delay: float, use_search: bool
                             found = (url, *res, "found_svk")
                             break
                 # 3. web search
-                if not found and key:
+                searched = False
+                if not found and key and budget["left"] > 0:
+                    budget["left"] -= 1
+                    budget["used"] += 1
+                    searched = True
                     try:
                         hits = await brave(request, key, f"{name} {city or ''}".strip())
                         await asyncio.sleep(1.1)   # free plan: 1 query per second
@@ -298,7 +307,7 @@ async def run(db: Path, limit: int, workers: int, delay: float, use_search: bool
                     store(oid, "found", url, final, html, how)
                     stats[how] += 1
                 else:
-                    store(oid, "notfound", None, None, None, "searched" if key else "no-search")
+                    store(oid, "notfound", None, None, None, "searched" if searched else "no-search")
                     stats["not_found"] += 1
                 done["n"] += 1
                 if done["n"] % 20 == 0 or done["n"] == len(rows):
@@ -307,7 +316,7 @@ async def run(db: Path, limit: int, workers: int, delay: float, use_search: bool
         await asyncio.gather(*(worker() for _ in range(workers)))
         await request.dispose()
     con.close()
-    print("Done:", stats)
+    print("Done:", stats, f"- web searches used: {budget['used']}")
     print("Next: python scraper/normalize.py --db", db)
 
 
@@ -335,6 +344,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="data/kyrktorget.db", type=Path)
     ap.add_argument("--max", default=0, type=int, help="max churches this run (0 = all)")
+    ap.add_argument("--max-searches", default=int(os.environ.get("MAX_SEARCHES", "20")), type=int,
+                    help="max web searches this run (default 20, or MAX_SEARCHES in .env; 0 = no limit)")
     ap.add_argument("--workers", default=6, type=int)
     ap.add_argument("--delay", default=1.5, type=float, help="seconds between requests to the same site")
     ap.add_argument("--retry", action="store_true", help="look again for churches not found earlier")
@@ -350,7 +361,7 @@ def main() -> None:
         con.execute("DELETE FROM raw_sites WHERE kind='notfound'")
         con.commit()
         con.close()
-    asyncio.run(run(a.db, a.max, a.workers, a.delay, not a.no_search))
+    asyncio.run(run(a.db, a.max, a.workers, a.delay, not a.no_search, a.max_searches))
 
 
 if __name__ == "__main__":
