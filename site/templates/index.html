@@ -13,6 +13,11 @@
     <form class="search" role="search" onsubmit="return false">
       <label class="visually-hidden" for="q">Sök</label>
       <input id="q" type="search" placeholder="Sök ort, kommun eller församling" autocomplete="off">
+      <label class="visually-hidden" for="samfund">Samfund</label>
+      <select id="samfund">
+        <option value="">Alla samfund</option>
+        {% for s, n in samfund_list %}<option value="{{ s }}">{{ s }} ({{ n }})</option>{% endfor %}
+      </select>
       <label class="visually-hidden" for="county">Län</label>
       <select id="county">
         <option value="">Alla län</option>
@@ -62,7 +67,7 @@
     {% for o in orgs %}
     <li class="card">
       <a href="{{ root }}forsamling/{{ o.slug }}/">
-        <span class="card-kicker">{{ o.denomination or o.kind or '' }}</span>
+        <span class="card-kicker">{{ o.samfund|join(' · ') }}</span>
         <h3>{{ o.name }}</h3>
         <p class="card-place">{{ o.city }}{% if o.municipality and o.municipality != o.city %}, {{ o.municipality }}{% endif %}</p>
         <ul class="tags">{% for a in o.activities[:4] %}<li>{{ a }}</li>{% endfor %}{% if o.activities|length > 4 %}<li class="more">+{{ o.activities|length - 4 }}</li>{% endif %}</ul>

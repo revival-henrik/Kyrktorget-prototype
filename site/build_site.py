@@ -18,6 +18,9 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 HERE = Path(__file__).resolve().parent
+SAMFUND_ORDER = ["Svenska kyrkan", "Katolska kyrkan", "Ortodoxa kyrkor", "EFS", "Equmeniakyrkan", "Pingströrelsen",
+                 "Evangeliska Frikyrkan", "Alliansmissionen", "Frälsningsarmén", "ELM", "Laestadianer",
+                 "Adventistsamfundet", "Trosrörelsen", "Lutherska frikyrkor", "Frikyrka (samfund okänt)", "Övriga"]
 SITE_NAME = "Församlingsguiden"
 TAGLINE = "Konceptprototyp"
 
@@ -66,6 +69,22 @@ def load(db: Path) -> dict:
     for o in orgs:
         o["activities"] = acts.get(o["id"], [])
         o["slug"] = slugify(o["id"])
+    samfund = defaultdict(list)
+    try:
+        for r in q("SELECT org_id, samfund FROM org_samfund"):
+            samfund[r["org_id"]].append(r["samfund"])
+    except sqlite3.OperationalError:
+        pass
+    if not samfund:   # database not tagged yet: decide from what we have
+        import sys
+        sys.path.insert(0, str(HERE.parent / "scraper"))
+        from samfund import classify
+        for o in orgs:
+            samfund[o["id"]] = classify(o["denomination"], o["name"], o["email"], o["website"])[0]
+    from_order = SAMFUND_ORDER.index
+    for o in orgs:
+        o["samfund"] = sorted(set(samfund.get(o["id"]) or ["Övriga"]),
+                              key=lambda s: from_order(s) if s in SAMFUND_ORDER else 99)
     by_id = {o["id"]: o for o in orgs}
     events = q("SELECT * FROM events ORDER BY starts_at")
     for e in events:
@@ -111,6 +130,8 @@ def build(db: Path, out: Path) -> None:
     orgs = data["orgs"]
     all_acts = sorted({a for o in orgs for a in o["activities"]})
     counties = sorted({o["county"] for o in orgs if o["county"]})
+    samfund_counts = {s: sum(1 for o in orgs if s in o["samfund"]) for s in SAMFUND_ORDER}
+    samfund_list = [(s, n) for s, n in samfund_counts.items() if n]
 
     # Which churches have upcoming calendar events / a website (colours on the map and in the list)
     today = dt.date.today().isoformat()
@@ -125,7 +146,7 @@ def build(db: Path, out: Path) -> None:
     (out / "data").mkdir()
     (out / "data" / "organizations.json").write_text(json.dumps([
         {k: o[k] for k in ("slug", "name", "kind", "denomination", "city", "municipality", "county", "activities",
-                           "lat", "lng", "website", "n_events")}
+                           "lat", "lng", "website", "n_events", "samfund")}
         for o in orgs
     ], ensure_ascii=False), encoding="utf-8")
     (out / "data" / "events.json").write_text(json.dumps([
@@ -139,6 +160,7 @@ def build(db: Path, out: Path) -> None:
     upcoming = [e for e in data["events"] if e["day"] >= dt.date.today().isoformat()][:4]
     n_mapped = sum(1 for o in orgs if o["lat"] is not None and o["lng"] is not None)
     render("index.html", "index.html", orgs=orgs, activities=all_acts, counties=counties, n_mapped=n_mapped,
+           samfund_list=samfund_list,
            upcoming=upcoming, n_orgs=len(orgs), n_events=len(data["events"]), n_jobs=len(data["jobs"]))
     for o in orgs:
         o_events = [e for e in data["events"] if e.get("org_id") == o["id"]]

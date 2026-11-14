@@ -59,7 +59,9 @@ h3 { font-size: 1.2rem; }
 .search { display: flex; gap: .6rem; margin-top: 2rem; max-width: 760px; background: var(--card); padding: .5rem; border-radius: 999px; border: 1px solid var(--line); box-shadow: 0 10px 30px -18px rgba(27, 38, 36, .35); }
 .search input, .search select { font: inherit; border: 0; background: transparent; color: var(--ink); padding: .7rem 1.1rem; }
 .search input { flex: 1; min-width: 0; }
-.search select { border-left: 1px solid var(--line); border-radius: 0 999px 999px 0; cursor: pointer; }
+.search select { max-width: 16rem; }
+.search select { border-left: 1px solid var(--line); cursor: pointer; }
+.search select:last-of-type { border-radius: 0 999px 999px 0; }
 .search input:focus, .search select:focus { outline: none; }
 .search:focus-within { border-color: var(--green); }
 

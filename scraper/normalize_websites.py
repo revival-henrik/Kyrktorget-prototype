@@ -113,8 +113,8 @@ def events_from_jsonld(items: list[dict], page_url: str) -> list[dict]:
         out.append({
             "title": name, "starts_at": start, "ends_at": clean(it.get("endDate")),
             "location": clean(loc.get("name")) if isinstance(loc, dict) else clean(loc),
-            "description": clean(BeautifulSoup(str(it.get("description") or ""), "html.parser").get_text(" "))[:500]
-            if it.get("description") else None,
+            "description": (clean(BeautifulSoup(str(it.get("description") or ""), "html.parser").get_text(" "))
+                            or "")[:500] or None,
             "source_url": clean(it.get("url")) or page_url,
         })
     return out
@@ -350,6 +350,40 @@ def load_svk_calendars(con) -> dict:
     return stats
 
 
+# ------------------------------------------------------------------ denominations
+def load_samfund(con) -> dict:
+    """Tag every church with its denomination(s); see samfund.py for the rules."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from samfund import classify
+
+    texts: dict[str, str] = {}
+    for oid, body in con.execute("SELECT org_id, body FROM raw_sites WHERE kind IN ('home','found') AND status=200 "
+                                 "AND final_url NOT LIKE '%svenskakyrkan.se%' AND body IS NOT NULL"):
+        if oid not in texts:
+            texts[oid] = BeautifulSoup(body[:300_000], "html.parser").get_text(" ")[:200_000]
+    directory = defaultdict(list)   # filled by fetch_directories.py, when it has been run
+    try:
+        for oid, sf in con.execute("SELECT org_id, samfund FROM org_samfund WHERE source='directory'"):
+            directory[oid].append(sf)
+    except sqlite3.OperationalError:
+        pass
+    con.execute("DELETE FROM org_samfund WHERE source<>'directory'")
+    counts: dict[str, int] = defaultdict(int)
+    for oid, name, denom, email, website in con.execute(
+            "SELECT id, name, denomination, email, website FROM organizations").fetchall():
+        if oid in directory:
+            labels = directory[oid]
+        else:
+            labels, how = classify(denom, name, email, website, texts.get(oid))
+            for label in labels:
+                con.execute("INSERT OR REPLACE INTO org_samfund(org_id,samfund,source) VALUES (?,?,?)",
+                            (oid, label, how))
+        for label in labels:
+            counts[label] += 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+
 # ------------------------------------------------------------------ main
 def in_window(start: str | None) -> bool:
     if not start:
@@ -426,6 +460,7 @@ def main() -> None:
 
     for k, v in load_svk_calendars(con).items():
         stats[k] = v
+    stats["samfund"] = load_samfund(con)
 
     # Drop Kyrktorget calendar copies of events the parish itself publishes at the same time
     con.execute("""

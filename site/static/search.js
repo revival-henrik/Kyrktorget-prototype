@@ -1,13 +1,13 @@
 (async function () {
   const ROOT = window.ROOT || "";
   const $ = (id) => document.getElementById(id);
-  const q = $("q"), county = $("county"), results = $("results"), count = $("result-count"),
+  const q = $("q"), county = $("county"), samfundSel = $("samfund"), results = $("results"), count = $("result-count"),
         empty = $("empty"), clear = $("clear"), nearBtn = $("near-me"), geoStatus = $("geo-status"),
         mapPanel = $("map-panel"), chips = [...document.querySelectorAll(".chip")],
         viewBtns = [...document.querySelectorAll("[data-view]")];
   const orgs = await fetch(ROOT + "data/organizations.json").then((r) => r.json());
   const fold = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
-  orgs.forEach((o) => (o._hay = fold([o.name, o.city, o.municipality, o.county, o.denomination].join(" "))));
+  orgs.forEach((o) => (o._hay = fold([o.name, o.city, o.municipality, o.county, o.denomination, (o.samfund || []).join(" ")].join(" "))));
   const hasCoords = (o) => typeof o.lat === "number" && typeof o.lng === "number";
 
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -30,6 +30,7 @@
   const params = new URLSearchParams(location.search);
   q.value = params.get("q") || "";
   county.value = params.get("lan") || "";
+  if (samfundSel) samfundSel.value = params.get("samfund") || "";
   (params.get("har") || "").split("|").filter(Boolean).forEach((a) => selected.add(a));
   (params.get("status") || "").split("|").filter((s) => STATUS[s]).forEach((s) => statusFilter.add(s));
   if (params.get("vy") === "karta" && mapPanel) view = "karta";
@@ -60,7 +61,7 @@
     ].join("");
     return `<li class="card status-${o._status}" style="--st:${STATUS[o._status].color}">
       <a href="${ROOT}forsamling/${esc(o.slug)}/" title="${esc(STATUS[o._status].label)}">
-      <span class="card-kicker">${esc(o.denomination || o.kind || "")}${dist}</span>
+      <span class="card-kicker">${esc((o.samfund || []).join(" · "))}${dist}</span>
       <h3>${esc(o.name)}</h3><p class="card-place">${esc(place(o))}</p>
       <div class="badges">${badges}</div>
       <ul class="tags">${tags}${more}</ul></a></li>`;
@@ -112,7 +113,7 @@
       const acts = o.activities.slice(0, 5).map(esc).join(" · ");
       const dist = o._dist != null ? ` · ${fmtKm(o._dist)}` : "";
       m.bindPopup(`<div class="map-pop">
-        <span class="card-kicker">${esc(o.denomination || o.kind || "")}</span>
+        <span class="card-kicker">${esc((o.samfund || []).join(" · "))}</span>
         <strong>${esc(o.name)}</strong>
         <span class="muted">${esc(place(o))}${dist}</span>
         ${acts ? `<span class="map-pop-acts">${acts}</span>` : ""}
@@ -185,6 +186,7 @@
     const p = new URLSearchParams();
     if (q.value) p.set("q", q.value);
     if (county.value) p.set("lan", county.value);
+    if (samfundSel && samfundSel.value) p.set("samfund", samfundSel.value);
     if (selected.size) p.set("har", [...selected].join("|"));
     if (statusFilter.size) p.set("status", [...statusFilter].join("|"));
     if (view === "karta") p.set("vy", "karta");
@@ -196,6 +198,7 @@
     const base = orgs.filter((o) =>
       terms.every((t) => o._hay.includes(t)) &&
       (!county.value || o.county === county.value) &&
+      (!samfundSel || !samfundSel.value || (o.samfund || []).includes(samfundSel.value)) &&
       [...selected].every((a) => o.activities.includes(a)));
     renderLegend(base);
     let hits = statusFilter.size ? base.filter((o) => statusFilter.has(o._status)) : base;
@@ -205,13 +208,14 @@
     results.innerHTML = hits.map(card).join("");
     count.textContent = `${hits.length} ${hits.length === 1 ? "träff" : "träffar"}`;
     empty.hidden = hits.length > 0;
-    clear.hidden = !(terms.length || county.value || selected.size || statusFilter.size);
+    clear.hidden = !(terms.length || county.value || (samfundSel && samfundSel.value) || selected.size || statusFilter.size);
     if (view === "karta" && window.L) drawMap(hits);
     syncUrl();
   }
 
   q.addEventListener("input", update);
   county.addEventListener("change", update);
+  if (samfundSel) samfundSel.addEventListener("change", update);
   chips.forEach((c) => c.addEventListener("click", () => {
     const a = c.dataset.activity;
     selected.has(a) ? selected.delete(a) : selected.add(a);
@@ -219,7 +223,7 @@
     update();
   }));
   clear.addEventListener("click", () => {
-    q.value = ""; county.value = ""; selected.clear(); statusFilter.clear();
+    q.value = ""; county.value = ""; if (samfundSel) samfundSel.value = ""; selected.clear(); statusFilter.clear();
     chips.forEach((c) => c.setAttribute("aria-pressed", "false"));
     update();
   });

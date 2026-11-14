@@ -99,6 +99,14 @@ CREATE TABLE IF NOT EXISTS info_pages (
     source_url TEXT
 );
 
+-- Denomination(s) per church, decided by scraper/samfund.py (a church can have several)
+CREATE TABLE IF NOT EXISTS org_samfund (
+    org_id  TEXT NOT NULL,
+    samfund TEXT NOT NULL,
+    source  TEXT,               -- 'kyrktorget' | 'directory' | 'domain' | 'name' | 'website' | 'unknown'
+    PRIMARY KEY (org_id, samfund)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT

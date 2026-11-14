@@ -4,7 +4,7 @@
 <div class="wrap detail">
   <a class="back" href="{{ root }}">Alla församlingar</a>
   <header class="detail-head">
-    {% if org.denomination or org.kind %}<p class="eyebrow">{{ org.denomination or org.kind }}</p>{% endif %}
+    <p class="eyebrow">{{ org.samfund|join(' · ') }}{% if org.kind == 'Kyrka' %} · Kyrka{% endif %}</p>
     <h1>{{ org.name }}</h1>
     <p class="lede">{{ org.city }}{% if org.municipality and org.municipality != org.city %}, {{ org.municipality }}{% endif %}{% if org.county %} · {{ org.county }}{% endif %}</p>
   </header>
