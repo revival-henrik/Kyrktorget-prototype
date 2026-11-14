@@ -8,3 +8,7 @@ __pycache__/
 # Databases are generated; real scraped data must never be committed
 data/*.db
 data/*.db-*
+
+# Local settings and secrets (API keys)
+.env
+.venv/

@@ -42,6 +42,13 @@ site/static/               CSS + small JS for search and calendar
 .github/workflows/         pages.yml (public demo), scrape.yml (private, manual)
 ```
 
+## Quick start (Mac)
+
+Double-click **Starta webbplatsen.command** to build the site from your data and open it, or
+**Uppdatera data.command** to fetch new data first. The same from Terminal: `./run.sh` or
+`./run.sh update`. Settings such as a Brave Search key go in a file called `.env`
+(see the top of `run.sh`); it is never uploaded to GitHub.
+
 ## Run locally
 
 ```bash
