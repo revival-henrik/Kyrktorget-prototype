@@ -58,6 +58,8 @@ python -m http.server -d dist 8000          # open http://localhost:8000
 python scraper/crawl.py --db data/kyrktorget.db                  # 1. parish list + kyrktorget pages (1-2 h, resumable)
 python scraper/fetch_osm.py --db data/kyrktorget.db              # 2a. church websites from OpenStreetMap (~2 min)
 python scraper/normalize.py --db data/kyrktorget.db              # 2b. -> tables
+python scraper/find_websites.py --db data/kyrktorget.db          # 2c. find + verify missing websites
+python scraper/normalize.py --db data/kyrktorget.db              # 2d. apply them
 python scraper/crawl_websites.py --db data/kyrktorget.db         # 3. each parish's own website (resumable)
 python scraper/normalize_websites.py --db data/kyrktorget.db     # 4. newest info from the websites
 python site/build_site.py --db data/kyrktorget.db --out dist-private
@@ -88,6 +90,13 @@ Only member churches have a website on kyrktorget.se. `fetch_osm.py` downloads c
 website from OpenStreetMap, and `normalize.py` matches them one-to-one by position (within 40 m) or
 by position and name (within 300 m–1 km). OpenStreetMap data is © OpenStreetMap contributors (ODbL),
 credited in the site footer.
+
+### Finding websites that nobody lists
+
+`find_websites.py` looks for the remaining churches' websites: first the church's own e-mail domain,
+then Svenska kyrkan's parish pages (svenskakyrkan.se/<parish>), and optionally a web search
+(Brave Search API, `export BRAVE_API_KEY=...`) for name + town. A page is only accepted when it
+matches the church: its name words, and its town, street, postal code or phone number.
 
 ### Parishes' own websites
 

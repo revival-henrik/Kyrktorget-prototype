@@ -176,7 +176,8 @@ async def run(db: Path, max_sites: int, delay: float, workers: int, refresh: boo
     rows = con.execute(
         "SELECT id, website FROM organizations WHERE website LIKE 'http%' ORDER BY id"
     ).fetchall()
-    done = set() if refresh else {r[0] for r in con.execute("SELECT DISTINCT org_id FROM raw_sites")}
+    done = set() if refresh else {r[0] for r in con.execute(
+        "SELECT DISTINCT org_id FROM raw_sites WHERE kind IN ('home', 'error')")}
     todo = [(oid, url) for oid, url in rows if oid not in done]
     if max_sites:
         todo = todo[:max_sites]

@@ -476,6 +476,10 @@ def main() -> None:
         "coordinates_from_markers": load_markers(con),
         "events": load_calendar(con),
         "info_pages": load_info_pages(con),
+        "websites_found_and_verified": con.execute(
+            "UPDATE organizations SET website=(SELECT final_url FROM raw_sites r WHERE r.org_id=organizations.id"
+            " AND r.kind='found' AND r.final_url IS NOT NULL LIMIT 1) WHERE website IS NULL AND id IN"
+            " (SELECT org_id FROM raw_sites WHERE kind='found' AND final_url IS NOT NULL)").rowcount,
         "websites_from_openstreetmap": load_osm_websites(con),
     }
     con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('dataset','kyrktorget')")
