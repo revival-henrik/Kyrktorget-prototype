@@ -56,7 +56,8 @@ python -m http.server -d dist 8000          # open http://localhost:8000
 
 # Real data (private use only)
 python scraper/crawl.py --db data/kyrktorget.db                  # 1. parish list + kyrktorget pages (1-2 h, resumable)
-python scraper/normalize.py --db data/kyrktorget.db              # 2. -> tables
+python scraper/fetch_osm.py --db data/kyrktorget.db              # 2a. church websites from OpenStreetMap (~2 min)
+python scraper/normalize.py --db data/kyrktorget.db              # 2b. -> tables
 python scraper/crawl_websites.py --db data/kyrktorget.db         # 3. each parish's own website (resumable)
 python scraper/normalize_websites.py --db data/kyrktorget.db     # 4. newest info from the websites
 python site/build_site.py --db data/kyrktorget.db --out dist-private
@@ -80,6 +81,13 @@ kyrktorget.se renders its pages on the server, and loads a few lists through int
 3. `/api/gmap/calmarkers` gives calendar events for the next 60 days.
 4. Each parish page (`/<shortname>` or `/church/<id>`) is parsed for denomination, description,
    activities, phone, e-mail, website, address and coordinates.
+
+### Websites for churches Kyrktorget has none for
+
+Only member churches have a website on kyrktorget.se. `fetch_osm.py` downloads churches with a
+website from OpenStreetMap, and `normalize.py` matches them one-to-one by position (within 40 m) or
+by position and name (within 300 m–1 km). OpenStreetMap data is © OpenStreetMap contributors (ODbL),
+credited in the site footer.
 
 ### Parishes' own websites
 

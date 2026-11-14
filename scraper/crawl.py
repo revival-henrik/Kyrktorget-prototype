@@ -223,16 +223,16 @@ def step_pages(site: Site, con, max_pages: int) -> None:
             print(f"  [{i}/{len(todo)}] {path}")
 
 
-REDIRECT_RE = re.compile(r'href=["\']((?:https?://(?:www\.)?kyrktorget\.se)?/redirect/\d+)["\']', re.I)
-
-
 def step_redirects(site: Site, con) -> None:
-    """Turn every kyrktorget.se/redirect/<id> website link into the church's real address."""
+    """Turn kyrktorget.se/redirect/<id> WEBSITE links into the church's real address.
+    (E-mail links are also redirects on kyrktorget.se; those are skipped.)"""
+    from normalize import parse_parish   # same folder
     print("\n[5/5] Resolving website links to the churches' real addresses …")
     links = set()
-    for (html,) in con.execute("SELECT html FROM raw_pages WHERE html LIKE '%/redirect/%'"):
-        for m in REDIRECT_RE.finditer(html or ""):
-            links.add(re.sub(r"^https?://(www\.)?kyrktorget\.se", "", m.group(1)))
+    for (html,) in con.execute("SELECT html FROM raw_pages WHERE status=200 AND html LIKE '%/redirect/%'"):
+        d = parse_parish(html or "")
+        if d.get("website_redirect") and not d.get("website"):
+            links.add(re.sub(r"^https?://(www\.)?kyrktorget\.se", "", d["website_redirect"]))
     done = {r[0] for r in con.execute("SELECT url FROM raw_sites WHERE kind='redirect'")}
     todo = sorted(p for p in links if BASE + p not in done)
     print(f"  {len(links)} links, {len(todo)} to resolve")

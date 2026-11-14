@@ -116,7 +116,7 @@ def build(db: Path, out: Path) -> None:
     (out / "data").mkdir()
     (out / "data" / "organizations.json").write_text(json.dumps([
         {k: o[k] for k in ("slug", "name", "kind", "denomination", "city", "municipality", "county", "activities",
-                           "lat", "lng")}
+                           "lat", "lng", "website")}
         for o in orgs
     ], ensure_ascii=False), encoding="utf-8")
     (out / "data" / "events.json").write_text(json.dumps([

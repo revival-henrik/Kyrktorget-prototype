@@ -98,7 +98,8 @@ h3 { font-size: 1.2rem; }
 .map-pop { display: flex; flex-direction: column; gap: .2rem; min-width: 190px; font-size: .9rem; line-height: 1.4; }
 .map-pop strong { font-family: var(--serif); font-size: 1.1rem; }
 .map-pop-acts { font-size: .8rem; color: var(--green-deep); margin-top: .2rem; }
-.map-pop a { margin-top: .4rem; font-weight: 500; }
+.map-pop-links { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin-top: .4rem; }
+.map-pop a { font-weight: 500; }
 .link-button { font: inherit; background: none; border: 0; color: var(--clay); cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .card a { display: flex; flex-direction: column; height: 100%; padding: 1.3rem 1.3rem 1.1rem; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); text-decoration: none; color: inherit; transition: transform .15s, box-shadow .15s, border-color .15s; }

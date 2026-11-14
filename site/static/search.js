@@ -75,7 +75,8 @@
         <strong>${esc(o.name)}</strong>
         <span class="muted">${esc(place(o))}${dist}</span>
         ${acts ? `<span class="map-pop-acts">${acts}</span>` : ""}
-        <a href="${ROOT}forsamling/${esc(o.slug)}/">Visa församlingen →</a></div>`);
+        <span class="map-pop-links"><a href="${ROOT}forsamling/${esc(o.slug)}/">Visa församlingen →</a>
+        ${o.website ? `<a href="${esc(o.website)}" target="_blank" rel="noopener">Webbplats ↗</a>` : ""}</span></div>`);
       m.addTo(layer);
     });
     if (meMarker) meMarker.addTo(map);

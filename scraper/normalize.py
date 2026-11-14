@@ -14,9 +14,10 @@ import argparse
 import json
 import re
 import sqlite3
+from collections import defaultdict
 from pathlib import Path
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 BASE = "https://kyrktorget.se"
 MAPS_RE = re.compile(r"maps/place/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)")
@@ -65,44 +66,84 @@ def lines_of(node: Tag) -> list[str]:
     return out
 
 
-def sections(panel: Tag) -> dict[str, list[str]]:
-    """Split a contact panel into {HEADING: [lines]} using its <h5> headings."""
-    result: dict[str, list[str]] = {}
+CONTACT_HEADS = {"TELEFON", "EPOST", "E-POST", "WEBB", "WEBBPLATS", "HEMSIDA", "POSTADRESS", "BESÖKSADRESS"}
+
+
+def sections(panel: Tag) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Split a contact block into ({HEADING: [lines]}, {HEADING: [link hrefs]}) using <h4>/<h5> headings."""
+    lines: dict[str, list[str]] = {}
+    links: dict[str, list[str]] = {}
+    first = panel.find(["h4", "h5"])
+    if not first:
+        return lines, links
     current = None
     buf: list[str] = []
 
     def flush():
         if current is not None:
-            text = "".join(buf)
-            result[current] = [l for l in (clean(x) for x in text.split("\n")) if l]
+            lines[current] = [l for l in (clean(x) for x in re.sub(r"<br\s*/?>", "\n", "".join(buf), flags=re.I).split("\n")) if l]
 
-    for el in panel.children:
-        if isinstance(el, Tag) and el.name == "h5":
+    for el in first.parent.children:
+        if isinstance(el, Comment):
+            continue
+        if isinstance(el, Tag) and el.name in ("h4", "h5"):
             flush()
             current, buf = el.get_text(strip=True).upper(), []
+            links.setdefault(current, [])
         elif current is not None:
             if isinstance(el, NavigableString):
                 buf.append(str(el))
             elif el.name == "br":
                 buf.append("\n")
+            elif el.name in ("ins", "script", "style"):
+                continue
             else:
+                for a in ([el] if el.name == "a" else el.find_all("a")):
+                    if a.get("href"):
+                        links[current].append(a["href"])
                 if el.name == "a" and el.get("href", "").startswith("mailto:"):
                     buf.append(el["href"][7:])
                 else:
                     buf.append(el.get_text(" "))
     flush()
-    return result
+    return lines, links
+
+
+def split_address(line: str) -> tuple[str | None, str | None]:
+    """'Roseniuskyrkan, Smala Gränd 5, Stockholm' -> ('Smala Gränd 5', 'Stockholm')."""
+    parts = [x.strip() for x in line.split(",") if x.strip()]
+    if not parts:
+        return None, None
+    j = next((i for i, p in enumerate(parts) if re.search(r"\d", p)), None)
+    if j is None:
+        return None, parts[-1] if len(parts) > 1 else None
+    return parts[j], (parts[-1] if j + 1 < len(parts) else None)
 
 
 def parse_parish(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
-    for t in soup(["script", "style", "noscript"]):
+    # Kyrktorget keeps the visiting address of non-member churches in an HTML comment
+    hidden_visit = None
+    for c in soup.find_all(string=lambda t: isinstance(t, Comment) and "Besöksadress" in t):
+        m = re.search(r"Besöksadress\s*</h\d>\s*(.+)", str(c), re.S)
+        if m:
+            hidden_visit = clean(BeautifulSoup(m.group(1), "html.parser").get_text(" "))
+    for t in soup(["script", "style", "noscript", "ins"]):
         t.decompose()
     d: dict = {"activities": []}
 
-    h3 = soup.select_one(".panel-body h3")
-    if h3:
+    # Name: <h1> on non-member pages, <h3> in the first panel on member pages
+    h1 = soup.select_one(".panel-body h1")
+    h3 = next((h for h in soup.select(".panel-body h3")
+               if h.get_text(strip=True).upper() not in ("KONTAKTUPPGIFTER", "KONTAKT")), None)
+    if h1:
+        d["name"] = clean(h1.get_text(" ", strip=True))
+    elif h3:
         d["name"] = clean(h3.get_text(" ", strip=True))
+    elif soup.title:
+        d["name"] = clean(re.split(r" - Kyrk(?:t)?orget", soup.title.get_text())[0])
+
+    if h3 and not h1:
         head = h3.find_parent(class_="col-md-12") or h3.parent
         den = head.find("div", style=re.compile(r"float:\s*left"))
         if den:
@@ -116,63 +157,72 @@ def parse_parish(html: str) -> dict:
                     parts.append(text)
             if parts:
                 d["description"] = "\n\n".join(parts)[:2000]
-    elif soup.title:
-        d["name"] = clean(soup.title.get_text().split(" - Kyrktorget")[0])
 
     for panel in soup.select(".panel-body"):
-        heading = panel.find(["h4", "h5"])
-        label = heading.get_text(strip=True).upper() if heading else ""
-        if label == "VI ERBJUDER":
+        heads = {h.get_text(strip=True).upper() for h in panel.find_all(["h4", "h5"])}
+        if "VI ERBJUDER" in heads:
             d["activities"] = [clean(b.get_text(" ", strip=True)) for b in panel.find_all("b")
                                if clean(b.get_text()) and clean(b.get_text()).upper() != "VI ERBJUDER"]
-        elif label in ("TELEFON", "EPOST", "WEBB", "POSTADRESS"):
-            sec = sections(panel)
+        if heads & CONTACT_HEADS:
+            sec, links = sections(panel)
             if sec.get("TELEFON"):
-                d["phone"] = "; ".join(sec["TELEFON"])
-            emails = [x for x in sec.get("EPOST", []) if "@" in x]
+                d["phone"] = "; ".join(re.sub(r"^Telefon\s*:?\s*", "", x, flags=re.I) for x in sec["TELEFON"])
+            emails = [re.sub(r"^E-?post\s*:?\s*", "", x, flags=re.I).strip()
+                      for x in sec.get("EPOST", []) + sec.get("E-POST", []) if "@" in x]
             if emails:
                 d["email"] = emails[0]
-            a = panel.find("a", href=re.compile(r"/redirect/\d+"))
-            if a:
-                d["website_redirect"] = BASE + a["href"] if a["href"].startswith("/") else a["href"]
-            if sec.get("WEBB"):
-                w = sec["WEBB"][0]
-                if re.match(r"^(https?://)?[\w.-]+\.[a-z]{2,}(/\S*)?$", w, re.I):
-                    d["website"] = w if w.startswith("http") else "https://" + w
-                else:  # link text is a label; use kyrktorget's redirect link instead
-                    a = panel.find("a", href=re.compile(r"/redirect/"))
-                    if a:
-                        d["website"] = BASE + a["href"] if a["href"].startswith("/") else a["href"]
+            web_head = next((h for h in ("WEBB", "WEBBPLATS", "HEMSIDA") if h in sec or h in links), None)
+            if web_head:
+                red = next((h for h in links.get(web_head, []) if "/redirect/" in h), None)
+                if red:
+                    d["website_redirect"] = BASE + red if red.startswith("/") else red
+                text = (sec.get(web_head) or [""])[0]
+                if re.match(r"^(https?://)?[\w.-]+\.[a-z]{2,}(/\S*)?$", text, re.I):
+                    d["website"] = text if text.startswith("http") else "https://" + text
+                else:
+                    direct = next((h for h in links.get(web_head, []) if h.startswith("http")
+                                   and "kyrktorget.se" not in h), None)
+                    if direct:
+                        d["website"] = direct
             if sec.get("POSTADRESS"):
                 d["postal_address"] = ", ".join(sec["POSTADRESS"])
-        elif label == "BESÖK OSS" or panel.find("a", href=MAPS_RE):
-            link = panel.find("a", href=MAPS_RE)
-            if link:
-                m = MAPS_RE.search(link["href"])
-                d["lat"], d["lng"] = float(m.group(1)), float(m.group(2))
-            block = link.parent if link else panel
+            if sec.get("BESÖKSADRESS") and "address" not in d:
+                d["address"], d["city"] = split_address(", ".join(sec["BESÖKSADRESS"]))
+        link = panel.find("a", href=MAPS_RE)
+        if link:
+            m = MAPS_RE.search(link["href"])
+            d["lat"], d["lng"] = float(m.group(1)), float(m.group(2))
+            block = link.parent
             name_b = block.find("b")
-            lines = [l for l in lines_of(block) if l.upper() not in ("BESÖK OSS", "HITTA HIT") and not SKIP_LINE.match(l)]
-            if name_b:
-                nb = clean(name_b.get_text())
-                if nb in lines:
-                    lines = lines[lines.index(nb) + 1:]
+            lines = [l for l in lines_of(block)
+                     if l.upper() not in ("BESÖK OSS", "HITTA HIT") and not SKIP_LINE.match(l)]
+            if name_b and clean(name_b.get_text()) in lines:
+                lines = lines[lines.index(clean(name_b.get_text())) + 1:]
             if lines:
-                # The street is the first line with a house number; lines before it are building names
                 idx = next((i for i, l in enumerate(lines) if re.search(r"\d", l)), 0)
                 street, rest = lines[idx], lines[idx + 1:]
-                city = rest[-1] if rest else None
-                if "," in street:  # e.g. "Roseniuskyrkan, Smala Gränd 5, Stockholm"
-                    parts = [x.strip() for x in street.split(",") if x.strip()]
-                    j = next((i for i, p in enumerate(parts) if re.search(r"\d", p)), 0)
-                    street = parts[j]
-                    if j + 1 < len(parts):
-                        city = city or parts[-1]
+                if "," in street:
+                    street, city = split_address(street)
+                    city = city or (rest[-1] if rest else None)
+                else:
+                    city = rest[-1] if rest else None
                 d["address"], d["city"] = street, city
-    pc = re.search(r"\b(\d{3}\s?\d{2})\s+([A-ZÅÄÖ][\wåäöÅÄÖ\- ]+)$", d.get("postal_address") or "")
+
+    if "address" not in d and hidden_visit:
+        d["address"], d["city"] = split_address(hidden_visit)
+    post = d.get("postal_address") or ""
+    pc = re.search(r"\b(\d{3}\s?\d{2})\s+([A-ZÅÄÖ][\wåäöÅÄÖ\- ]+)$", post)
     if pc:
         d["postal_code"] = pc.group(1)
         d.setdefault("city", pc.group(2).strip())
+        if not d.get("city"):
+            d["city"] = pc.group(2).strip()
+    if "address" not in d and post:
+        street = post.split(",")[0].strip()
+        if re.search(r"\d", street) and not re.match(r"^(box|pl|postbox)\b", street, re.I):
+            d["address"] = street
+    if not d.get("address"):
+        d.pop("address", None)
     return d
 
 
@@ -315,6 +365,82 @@ def load_calendar(con) -> int:
     return n
 
 
+STOP_WORDS = {"i", "och", "av", "på", "the", "församling", "församlingen", "församlingar", "kyrka", "kyrkan",
+              "kyrkor", "pastorat", "svenska", "kyrkans", "kapell", "kapellet", "s:t", "s:ta", "sankt", "sankta"}
+
+
+def name_tokens(s: str | None) -> set[str]:
+    s = (s or "").lower()
+    s = re.sub(r"<[^>]+>", " ", s)
+    toks = set(re.findall(r"[a-zåäöéü0-9]+", s))
+    return {t for t in toks if t not in STOP_WORDS and len(t) > 1}
+
+
+def similarity(a: str | None, b: str | None) -> float:
+    ta, tb = name_tokens(a), name_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    # also count prefix matches (Adventkyrkan ~ advent, Bodakyrkan ~ boda)
+    hits = sum(1 for x in ta if any(x == y or (len(x) > 3 and (y.startswith(x) or x.startswith(y))) for y in tb))
+    return hits / max(1, min(len(ta), len(tb)))
+
+
+def metres(lat1, lng1, lat2, lng2) -> float:
+    import math
+    r = math.radians
+    x = (r(lng2) - r(lng1)) * math.cos(r((lat1 + lat2) / 2))
+    y = r(lat2) - r(lat1)
+    return 6_371_000 * math.hypot(x, y)
+
+
+def load_osm_websites(con) -> int:
+    """Website for churches Kyrktorget has none for, matched from OpenStreetMap by position + name."""
+    row = con.execute("SELECT body FROM raw_api_responses WHERE url LIKE '%overpass%' ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return 0
+    try:
+        elements = json.loads(row[0]).get("elements", [])
+    except ValueError:
+        return 0
+    places = []
+    for e in elements:
+        t = e.get("tags", {})
+        lat = e.get("lat") or (e.get("center") or {}).get("lat")
+        lng = e.get("lon") or (e.get("center") or {}).get("lon")
+        web = t.get("website") or t.get("contact:website") or t.get("url")
+        if lat is None or lng is None or not web:
+            continue
+        web = web.split(";")[0].strip()
+        if not web.startswith("http"):
+            web = "https://" + web
+        places.append((float(lat), float(lng), " ".join(filter(None, [t.get("name"), t.get("operator"), t.get("alt_name")])), web))
+    # coarse grid so each church is only compared with nearby places
+    grid = defaultdict(list)
+    for p in places:
+        grid[(round(p[0], 2), round(p[1], 2))].append(p)
+    pairs = []
+    for oid, name, lat, lng in con.execute(
+            "SELECT id, name, lat, lng FROM organizations WHERE website IS NULL AND lat IS NOT NULL").fetchall():
+        for dy in (-0.01, 0, 0.01):
+            for dx in (-0.01, 0, 0.01):
+                for p in grid.get((round(lat + dy, 2), round(lng + dx, 2)), []):
+                    plat, plng, pname, web = p
+                    dist = metres(lat, lng, plat, plng)
+                    sim = similarity(name, pname)
+                    if dist <= 40 or (dist <= 300 and sim >= 0.5) or (dist <= 1000 and sim >= 0.99):
+                        pairs.append((sim - dist / 1000, oid, id(p), web))
+    # one-to-one: best pairs first; each church and each OpenStreetMap place used once
+    used_org, used_place, n = set(), set(), 0
+    for score, oid, pid, web in sorted(pairs, reverse=True):
+        if oid in used_org or pid in used_place:
+            continue
+        used_org.add(oid)
+        used_place.add(pid)
+        con.execute("UPDATE organizations SET website=? WHERE id=?", (web, oid))
+        n += 1
+    return n
+
+
 def load_info_pages(con) -> int:
     n = 0
     for url, html in con.execute("SELECT url, html FROM raw_pages WHERE url LIKE '%/page/%' AND status=200").fetchall():
@@ -350,6 +476,7 @@ def main() -> None:
         "coordinates_from_markers": load_markers(con),
         "events": load_calendar(con),
         "info_pages": load_info_pages(con),
+        "websites_from_openstreetmap": load_osm_websites(con),
     }
     con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('dataset','kyrktorget')")
     con.commit()

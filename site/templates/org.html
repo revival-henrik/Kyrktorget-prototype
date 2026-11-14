@@ -45,7 +45,13 @@
       {% elif org.lat is not none and org.lng is not none %}{% set dest = org.lat ~ ',' ~ org.lng %}
       {% else %}{% set dest = org.name ~ ((', ' ~ org.city) if org.city else '') %}{% endif %}
       <div class="contact-actions">
-        <a class="button" href="https://www.google.com/maps/dir/?api=1&amp;destination={{ dest|urlencode }}" target="_blank" rel="noopener">
+        {% if org.website %}
+        <a class="button" href="{{ org.website }}" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          Besök webbplatsen
+        </a>
+        {% endif %}
+        <a class="button{% if org.website %} button-secondary{% endif %}" href="https://www.google.com/maps/dir/?api=1&amp;destination={{ dest|urlencode }}" target="_blank" rel="noopener">
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2 4 20l8-4 8 4z" fill="currentColor"/></svg>
           Vägbeskrivning
         </a>
