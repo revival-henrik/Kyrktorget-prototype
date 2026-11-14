@@ -105,6 +105,20 @@ then Svenska kyrkan's parish pages (svenskakyrkan.se/<parish>), and optionally a
 (Brave Search API, `export BRAVE_API_KEY=...`) for name + town. A page is only accepted when it
 matches the church: its name words, and its town, street, postal code or phone number.
 
+### All Svenska kyrkan churches
+
+`fetch_osm.py` also downloads every Svenska kyrkan church in Sweden from OpenStreetMap.
+`normalize.py` adds the ones that are not already in the database (not within 60 m, or within 400 m
+with a similar name), skips ruins and other denominations, and gives each new church the nearest
+municipality/county and its parish's website when known.
+
+### Svenska kyrkan calendars
+
+Svenska kyrkan has no public calendar feed; events are loaded into each parish's calendar page
+(`svenskakyrkan.se/kalender?type=owner&id=…`) by JavaScript. `crawl_svk_calendar.py` opens that page
+in a headless browser, presses "Visa fler", and saves the data the page loads.
+`normalize_websites.py` turns it into events for the next 60 days.
+
 ### Parishes' own websites
 
 `crawl_websites.py` visits the website listed for each parish (home page, plus a contact page,

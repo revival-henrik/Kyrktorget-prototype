@@ -200,6 +200,126 @@ def unescape(s: str | None) -> str | None:
     return clean(s.replace("\\n", " ").replace("\\N", " ").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\"))
 
 
+# ------------------------------------------------------------------ Svenska kyrkan calendars
+SVK_TITLE = ("title", "name", "heading", "rubrik", "eventtitle", "eventname", "header")
+SVK_START = ("start", "startdate", "starttime", "startdatetime", "startsat", "from", "datefrom", "date", "datum",
+             "eventstart", "begin", "occurson", "time")
+SVK_END = ("end", "enddate", "endtime", "enddatetime", "endsat", "to", "dateto", "eventend")
+SVK_PLACE = ("place", "placename", "location", "locationname", "venue", "lokal", "plats", "room", "church")
+SVK_TEXT = ("preamble", "ingress", "summary", "shortdescription", "description", "text", "intro", "teaser")
+SVK_URL = ("url", "link", "href", "permalink", "pageurl")
+
+
+def _get(d: dict, keys) -> object:
+    low = {re.sub(r"[^a-z]", "", k.lower()): v for k, v in d.items()}
+    for k in keys:
+        v = low.get(k)
+        if v not in (None, "", [], {}):
+            if isinstance(v, dict):
+                v = v.get("name") or v.get("title") or v.get("Name") or v.get("Title") or v.get("value")
+            return v
+    return None
+
+
+def _date(v) -> str | None:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)) and v > 10**9:            # epoch seconds / milliseconds
+        return dt.datetime.fromtimestamp(v / 1000 if v > 10**11 else v).isoformat(timespec="minutes")
+    s = str(v).strip()
+    m = re.match(r"(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?", s)
+    if not m:
+        return None
+    if s.endswith("Z") and m.group(2):
+        t = dt.datetime.fromisoformat(s[:19]).replace(tzinfo=dt.timezone.utc).astimezone(_stockholm())
+        return t.replace(tzinfo=None).isoformat(timespec="minutes")
+    return m.group(1) + (f"T{m.group(2)}" if m.group(2) and m.group(2) != "00:00" else "")
+
+
+def svk_events_from_json(doc) -> list[dict]:
+    out, stack = [], [doc]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, list):
+            stack.extend(x)
+        elif isinstance(x, dict):
+            title, start = _get(x, SVK_TITLE), _date(_get(x, SVK_START))
+            if isinstance(title, str) and start:
+                url = _get(x, SVK_URL)
+                out.append({
+                    "title": clean(title), "starts_at": start, "ends_at": _date(_get(x, SVK_END)),
+                    "location": clean(_get(x, SVK_PLACE)) if not isinstance(_get(x, SVK_PLACE), (list, dict)) else None,
+                    "description": (clean(BeautifulSoup(str(_get(x, SVK_TEXT) or ""), "html.parser").get_text(" "))
+                                    or None),
+                    "source_url": (urllib.parse.urljoin("https://www.svenskakyrkan.se/", url)
+                                   if isinstance(url, str) else None),
+                })
+            else:
+                stack.extend(v for v in x.values() if isinstance(v, (list, dict)))
+    return out
+
+
+def svk_events_from_html(html: str, page_url: str) -> list[dict]:
+    """Fallback: events in the rendered page, found by their <time datetime=...> tags."""
+    soup = BeautifulSoup(html, "html.parser")
+    out = []
+    for t in soup.find_all("time", attrs={"datetime": True}):
+        box = t.find_parent(["article", "li"]) or t.parent
+        head = box.find(["h2", "h3", "h4"]) if box else None
+        start = _date(t["datetime"])
+        if not (head and start):
+            continue
+        a = head.find("a", href=True) or box.find("a", href=True)
+        out.append({"title": clean(head.get_text(" ")), "starts_at": start, "ends_at": None,
+                    "location": None, "description": None,
+                    "source_url": urllib.parse.urljoin(page_url, a["href"]) if a else page_url})
+    return out
+
+
+def load_svk_calendars(con) -> dict:
+    stats = {"svk_parishes_with_events": 0, "svk_events": 0}
+    by_org: dict[str, list[dict]] = defaultdict(list)
+    for page_url, body in con.execute("SELECT page_url, body FROM raw_api_responses WHERE page_url LIKE 'svk:%'"):
+        try:
+            by_org[page_url[4:]] += svk_events_from_json(json.loads(body))
+        except ValueError:
+            continue
+    for org_id, url, body in con.execute("SELECT org_id, final_url, body FROM raw_sites WHERE kind='svkcal' "
+                                         "AND body<>'shared'"):
+        if not by_org.get(org_id):
+            by_org[org_id] += svk_events_from_html(body or "", url or "")
+    # Churches sharing a pastorat calendar get the events that mention them
+    shared = con.execute("SELECT s.org_id, o.name, p.org_id FROM raw_sites s JOIN organizations o ON o.id = s.org_id "
+                         "JOIN raw_sites p ON p.kind='svkcal' AND p.final_url = s.final_url AND p.body<>'shared' "
+                         "WHERE s.kind='svkcal' AND s.body='shared'").fetchall()
+    for org_id, name, primary in shared:
+        words = {w for w in re.findall(r"[a-zåäö]{4,}", (name or "").lower())} - {"kyrka", "kyrkan", "församling"}
+        by_org[org_id] += [e for e in by_org.get(primary, [])
+                           if words & set(re.findall(r"[a-zåäö]{4,}", f"{e['title']} {e['location']}".lower()))]
+
+    con.execute("DELETE FROM events WHERE id LIKE 'svk-%'")
+    for org_id, events in by_org.items():
+        seen, n = set(), 0
+        for e in events:
+            if not in_window(e["starts_at"]):
+                continue
+            key = (e["starts_at"][:16], (e["title"] or "").lower(), (e["location"] or "").lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            eid = "svk-" + hashlib.sha1(f"{org_id}|{key}".encode()).hexdigest()[:12]
+            con.execute(
+                "INSERT OR REPLACE INTO events(id,org_id,title,starts_at,ends_at,location,city,category,"
+                "description,source_url) VALUES (?,?,?,?,?,?,(SELECT city FROM organizations WHERE id=?),?,?,?)",
+                (eid, org_id, e["title"], e["starts_at"], e["ends_at"], e["location"], org_id, None,
+                 (e["description"] or "")[:500] or None, e["source_url"]))
+            n += 1
+        if n:
+            stats["svk_parishes_with_events"] += 1
+            stats["svk_events"] += n
+    return stats
+
+
 # ------------------------------------------------------------------ main
 def in_window(start: str | None) -> bool:
     if not start:
@@ -273,6 +393,9 @@ def main() -> None:
                  e["description"], e["source_url"]),
             )
             stats["events"] += 1
+
+    for k, v in load_svk_calendars(con).items():
+        stats[k] = v
 
     # Drop Kyrktorget calendar copies of events the parish itself publishes at the same time
     con.execute("""

@@ -13,6 +13,7 @@ import argparse
 import datetime as dt
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -28,7 +29,31 @@ QUERY = """
 );
 out center tags;
 """
+# All Svenska kyrkan churches in Sweden (Lutheran places of worship, or run by a parish/pastorat)
+QUERY_SVK = """
+[out:json][timeout:300];
+area["ISO3166-1"="SE"][admin_level=2]->.se;
+(
+  nwr["amenity"="place_of_worship"]["religion"="christian"]["denomination"~"^(lutheran|church_of_sweden|evangelical_lutheran|evangelical)$"](area.se);
+  nwr["amenity"="place_of_worship"]["religion"="christian"]["operator"~"svenska kyrkan|församling|pastorat",i](area.se);
+);
+out center tags;
+"""
 SCHEMA = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
+
+
+def overpass(req, query: str, label: str):
+    for url in ENDPOINTS:
+        print(f"Asking {url} for {label} … (can take a few minutes)")
+        try:
+            r = req.post(url, form={"data": query}, timeout=420_000)
+            body = r.text()
+            n = len(json.loads(body).get("elements", []))
+            print(f"  {n} found")
+            return url, r.status, body
+        except Exception as exc:
+            print(f"  failed: {exc}")
+    return None
 
 
 def main() -> None:
@@ -39,24 +64,19 @@ def main() -> None:
     con.executescript(SCHEMA.read_text(encoding="utf-8"))
     with sync_playwright() as pw:
         req = pw.request.new_context(user_agent="kyrktorget-prototype/0.3 (OpenStreetMap church websites)")
-        for url in ENDPOINTS:
-            print(f"Asking {url} … (can take a few minutes)")
-            try:
-                r = req.post(url, form={"data": QUERY}, timeout=420_000)
-                body = r.text()
-                n = len(json.loads(body).get("elements", []))
-            except Exception as exc:
-                print(f"  failed: {exc}")
+        for label, query in (("osm-church-websites", QUERY), ("osm-svk-churches", QUERY_SVK)):
+            res = overpass(req, query, label)
+            if not res:
                 continue
-            con.execute("DELETE FROM raw_api_responses WHERE url LIKE '%overpass%'")
+            url, status, body = res
+            con.execute("DELETE FROM raw_api_responses WHERE page_url=?", (label,))
             con.execute(
                 "INSERT INTO raw_api_responses(page_url,url,method,status,content_type,body,fetched_at)"
                 " VALUES (?,?,?,?,?,?,?)",
-                ("osm-church-websites", url, "POST", r.status, "application/json", body,
+                (label, url, "POST", status, "application/json", body,
                  dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")))
             con.commit()
-            print(f"  {n} churches with a website in OpenStreetMap")
-            break
+            time.sleep(5)   # be kind to the shared Overpass servers
         req.dispose()
     con.close()
     print("Next: python scraper/normalize.py --db", a.db)

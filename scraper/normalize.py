@@ -395,7 +395,8 @@ def metres(lat1, lng1, lat2, lng2) -> float:
 
 def load_osm_websites(con) -> int:
     """Website for churches Kyrktorget has none for, matched from OpenStreetMap by position + name."""
-    row = con.execute("SELECT body FROM raw_api_responses WHERE url LIKE '%overpass%' ORDER BY id DESC LIMIT 1").fetchone()
+    row = con.execute("SELECT body FROM raw_api_responses WHERE url LIKE '%overpass%' AND page_url<>'osm-svk-churches'"
+                      " ORDER BY id DESC LIMIT 1").fetchone()
     if not row:
         return 0
     try:
@@ -441,6 +442,92 @@ def load_osm_websites(con) -> int:
     return n
 
 
+NOT_SVK_OSM = re.compile(r"katolsk|catholic|ortodox|orthodox|pingst|baptist|missions|equmenia|metodist|advent|"
+                         r"frälsnings|frikyrk|filadelfia|evangeliska frikyrkan|efk|elm|lutherska bekännelse", re.I)
+
+
+def load_osm_svk_churches(con) -> int:
+    """Add every Svenska kyrkan church from OpenStreetMap that is not already in the database."""
+    row = con.execute("SELECT body FROM raw_api_responses WHERE page_url='osm-svk-churches' "
+                      "ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        return 0
+    try:
+        elements = json.loads(row[0]).get("elements", [])
+    except ValueError:
+        return 0
+    existing = con.execute("SELECT id, name, lat, lng, municipality, county, website FROM organizations "
+                           "WHERE lat IS NOT NULL AND id NOT LIKE 'osm-%'").fetchall()
+    grid = defaultdict(list)
+    coarse = defaultdict(list)          # ~20 km cells, to find the nearest municipality/county
+    for e in existing:
+        grid[(round(e[2], 2), round(e[3], 2))].append(e)
+        coarse[(round(e[2] * 5), round(e[3] * 5))].append(e)
+    parish_site = {clean(n).lower(): w for n, w in con.execute(
+        "SELECT name, website FROM organizations WHERE website IS NOT NULL AND id NOT LIKE 'osm-%'") if n}
+
+    def nearest_area(lat, lng):
+        best = None
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                for oid, oname, olat, olng, muni, county, web in coarse.get((round(lat * 5) + dy, round(lng * 5) + dx), []):
+                    d = metres(lat, lng, olat, olng)
+                    if muni and (best is None or d < best[0]):
+                        best = (d, muni, county)
+        return best
+
+    def nearby(lat, lng):
+        for dy in (-0.01, 0, 0.01):
+            for dx in (-0.01, 0, 0.01):
+                yield from grid.get((round(lat + dy, 2), round(lng + dx, 2)), [])
+
+    con.execute("DELETE FROM organizations WHERE id LIKE 'osm-%'")
+    n = 0
+    for e in elements:
+        t = e.get("tags", {})
+        name = clean(t.get("name"))
+        lat = e.get("lat") or (e.get("center") or {}).get("lat")
+        lng = e.get("lon") or (e.get("center") or {}).get("lon")
+        if not name or lat is None or lng is None:
+            continue
+        if NOT_SVK_OSM.search(" ".join([name, t.get("operator", ""), t.get("denomination", "")])):
+            continue
+        if t.get("historic") in ("ruins", "church_ruin") or t.get("ruins") == "yes" or "ruin" in name.lower() \
+                or t.get("disused:amenity") or t.get("abandoned") == "yes":
+            continue
+        # Already in the database? (same spot, or close by with a similar name)
+        dup = False
+        for oid, oname, olat, olng, muni, county, web in nearby(lat, lng):
+            dist = metres(lat, lng, olat, olng)
+            if dist <= 60 or (dist <= 400 and similarity(name, oname) >= 0.5):
+                dup = True
+                break
+        if dup:
+            continue
+        best = nearest_area(float(lat), float(lng))
+        operator = clean(t.get("operator"))
+        web = t.get("website") or t.get("contact:website") or t.get("url")
+        if web and not web.startswith("http"):
+            web = "https://" + web
+        if not web and operator:
+            web = parish_site.get(operator.lower())     # the parish's site, when we know it
+        street = " ".join(filter(None, [t.get("addr:street"), t.get("addr:housenumber")])) or None
+        city = clean(t.get("addr:city") or t.get("addr:place"))
+        muni = best[1] if best and best[0] < 25_000 else None
+        county = best[2] if best and best[0] < 40_000 else None
+        oid = f"osm-{e.get('type', 'x')[0]}{e.get('id')}"
+        con.execute(
+            "INSERT OR REPLACE INTO organizations(id,name,kind,denomination,address,postal_code,city,municipality,"
+            "county,website,phone,email,description,lat,lng,source_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (oid, name, "Kyrka", "Svenska kyrkan", street, clean(t.get("addr:postcode")), city or muni, muni, county,
+             web, clean(t.get("phone") or t.get("contact:phone")), clean(t.get("email") or t.get("contact:email")),
+             f"Tillhör {operator}." if operator else None, float(lat), float(lng),
+             f"https://www.openstreetmap.org/{e.get('type')}/{e.get('id')}"),
+        )
+        n += 1
+    return n
+
+
 def load_info_pages(con) -> int:
     n = 0
     for url, html in con.execute("SELECT url, html FROM raw_pages WHERE url LIKE '%/page/%' AND status=200").fetchall():
@@ -482,6 +569,7 @@ def main() -> None:
             " AND r.kind='found' AND r.final_url IS NOT NULL LIMIT 1) WHERE website IS NULL AND id IN"
             " (SELECT org_id FROM raw_sites WHERE kind='found' AND final_url IS NOT NULL)").rowcount,
         "websites_from_openstreetmap": load_osm_websites(con),
+        "svenska_kyrkan_churches_added_from_openstreetmap": load_osm_svk_churches(con),
     }
     con.execute("INSERT OR REPLACE INTO meta(key,value) VALUES ('dataset','kyrktorget')")
     con.commit()

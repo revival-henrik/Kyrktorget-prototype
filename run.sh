@@ -55,7 +55,7 @@ if [ "$MODE" = "update" ] || [ "$MODE" = "full" ]; then
     step "1/5 Kyrktorget: reading any church pages not fetched yet"
     $KEEP_AWAKE python scraper/crawl.py --db "$DB" --skip-lists
   fi
-  step "2/5 OpenStreetMap: church websites"
+  step "2/5 OpenStreetMap: all Svenska kyrkan churches and church websites"
   python scraper/fetch_osm.py --db "$DB" || echo "(OpenStreetMap not reachable - skipped)"
   python scraper/normalize.py --db "$DB"
   step "3/5 Finding missing websites"
@@ -64,6 +64,8 @@ if [ "$MODE" = "update" ] || [ "$MODE" = "full" ]; then
   python scraper/normalize.py --db "$DB"
   step "4/5 Reading the churches' own websites"
   $KEEP_AWAKE python scraper/crawl_websites.py --db "$DB"
+  step "5/5 Svenska kyrkan calendars"
+  $KEEP_AWAKE python scraper/crawl_svk_calendar.py --db "$DB" --refresh
 fi
 
 # --- build ------------------------------------------------------------------
