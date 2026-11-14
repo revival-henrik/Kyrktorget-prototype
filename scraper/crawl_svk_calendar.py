@@ -1,11 +1,10 @@
 """Read Svenska kyrkan parish calendars (svenskakyrkan.se/kalender?type=owner&id=...).
 
-Svenska kyrkan has no public calendar feed: the events are loaded into the calendar page by
-JavaScript. So this opens each parish's calendar page in a real (headless) browser, the same way a
-visitor would, presses "Visa fler" a few times, and saves:
-  * every JSON response the page loads   -> raw_api_responses (page_url = 'svk:<church id>')
-  * the finished page                     -> raw_sites (kind = 'svkcal')
-normalize_websites.py turns these into events.
+Svenska kyrkan has no public calendar feed. The calendar page shows the first 10 events and loads
+more when a visitor presses "Visa fler händelser". So this opens each parish's calendar page in a
+real (headless) browser, declines optional cookies, presses that button until the list covers the
+next 60 days, and saves the finished page (raw_sites, kind = 'svkcal').
+normalize_websites.py reads the events from it (title, time, place, theme, description).
 
 Only churches whose website is on svenskakyrkan.se are visited. Polite: one page at a time with a
 pause in between, and resumable (parishes already read are skipped; --refresh reads them again).
@@ -35,7 +34,11 @@ USER_AGENT = (
     "Chrome/130.0 Safari/537.36 kyrktorget-prototype/0.4"
 )
 CAL_LINK = re.compile(r'href="([^"]*/kalender\?type=owner[^"]*)"', re.I)
-MORE_LABELS = ["Visa fler", "Visa mer", "Ladda fler", "Fler händelser", "Visa fler händelser"]
+MORE_BUTTON = "button:has-text('Visa fler händelser'), button.js-show-all"
+COOKIE_DECLINE = "button:has-text('Avvisa'), #CybotCookiebotDialogBodyButtonDecline"
+LAST_DATE_JS = """() => { const t = [...document.querySelectorAll('svk-list-item time[datetime]')];
+  return { n: document.querySelectorAll('svk-list-item').length,
+           last: t.length ? t[t.length - 1].getAttribute('datetime').slice(0, 10) : null }; }"""
 
 
 def now() -> str:
@@ -63,7 +66,8 @@ def main() -> None:
     ap.add_argument("--db", default="data/kyrktorget.db", type=Path)
     ap.add_argument("--max", default=0, type=int, help="max parishes this run (0 = all)")
     ap.add_argument("--delay", default=2.0, type=float, help="seconds between parishes")
-    ap.add_argument("--more", default=4, type=int, help="how many times to press 'Visa fler'")
+    ap.add_argument("--more", default=15, type=int, help="max presses of 'Visa fler händelser' per parish")
+    ap.add_argument("--days", default=60, type=int, help="read events this many days ahead")
     ap.add_argument("--refresh", action="store_true", help="read parishes again even if done before")
     a = ap.parse_args()
 
@@ -83,25 +87,8 @@ def main() -> None:
         browser = pw.chromium.launch()
         context = browser.new_context(user_agent=USER_AGENT, locale="sv-SE")
         page = context.new_page()
-        current = {"org": None, "n": 0}
-
-        def on_response(resp):
-            if not current["org"] or "json" not in resp.headers.get("content-type", ""):
-                return
-            if not urllib.parse.urlparse(resp.url).netloc.endswith("svenskakyrkan.se"):
-                return
-            try:
-                body = resp.text()
-            except Exception:
-                return
-            con.execute(
-                "INSERT OR IGNORE INTO raw_api_responses(page_url,url,method,status,content_type,body,fetched_at)"
-                " VALUES (?,?,?,?,?,?,?)",
-                (f"svk:{current['org']}", resp.url, resp.request.method, resp.status,
-                 resp.headers.get("content-type", ""), body, now()))
-            current["n"] += 1
-
-        page.on("response", on_response)
+        until = (dt.date.today() + dt.timedelta(days=a.days)).isoformat()
+        cookies_done = False
 
         for i, (oid, name, website) in enumerate(todo, 1):
             root = parish_root(website)
@@ -117,7 +104,6 @@ def main() -> None:
             home = con.execute("SELECT body FROM raw_sites WHERE org_id=? AND kind IN ('found','home') AND status=200 "
                                "AND final_url LIKE '%svenskakyrkan.se%' LIMIT 1", (oid,)).fetchone()
             home_html = home[0] if home else ""
-            current["org"], current["n"] = oid, 0
             try:
                 if not CAL_LINK.search(home_html or ""):
                     page.goto(root, wait_until="domcontentloaded", timeout=60_000)
@@ -125,29 +111,36 @@ def main() -> None:
                     time.sleep(a.delay / 2)
                 cal = calendar_url(home_html, root)
                 page.goto(cal, wait_until="networkidle", timeout=60_000)
+                if not cookies_done:   # the cookie banner blocks the "show more" button
+                    btn = page.locator(COOKIE_DECLINE)
+                    if btn.count() and btn.first.is_visible():
+                        btn.first.click(timeout=5_000)
+                    cookies_done = True
+                state = page.evaluate(LAST_DATE_JS)
                 for _ in range(a.more):
-                    clicked = False
-                    for label in MORE_LABELS:
-                        btn = page.get_by_role("button", name=label)
-                        if btn.count() and btn.first.is_visible():
-                            btn.first.click(timeout=3_000)
-                            page.wait_for_load_state("networkidle", timeout=15_000)
-                            clicked = True
-                            break
-                    if not clicked:
+                    if not state["last"] or state["last"] > until:
                         break
+                    more = page.locator(MORE_BUTTON)
+                    if not (more.count() and more.first.is_visible()):
+                        break
+                    more.first.click(timeout=5_000)
+                    try:   # wait until new events have been added
+                        page.wait_for_function(f"document.querySelectorAll('svk-list-item').length > {state['n']}",
+                                               timeout=15_000)
+                    except Exception:
+                        break
+                    state = page.evaluate(LAST_DATE_JS)
+                    time.sleep(0.5)
                 html = page.content()
             except Exception as exc:
                 print(f"  [error] {name}: {exc}", file=sys.stderr)
-                current["org"] = None
                 time.sleep(a.delay)
                 continue
-            current["org"] = None
             con.execute("INSERT OR REPLACE INTO raw_sites(url,org_id,kind,status,final_url,body,fetched_at)"
                         " VALUES (?,?,?,?,?,?,?)", (f"svkcal:{oid}", oid, "svkcal", 200, cal, html, now()))
             con.commit()
             seen_roots[root] = cal
-            print(f"  [{i}/{len(todo)}] {name}: {current['n']} data responses")
+            print(f"  [{i}/{len(todo)}] {name}: {state['n']} events (until {state['last']})")
             time.sleep(a.delay)
         browser.close()
     con.close()

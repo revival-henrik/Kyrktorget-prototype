@@ -227,7 +227,7 @@ def _date(v) -> str | None:
     if isinstance(v, (int, float)) and v > 10**9:            # epoch seconds / milliseconds
         return dt.datetime.fromtimestamp(v / 1000 if v > 10**11 else v).isoformat(timespec="minutes")
     s = str(v).strip()
-    m = re.match(r"(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?", s)
+    m = re.match(r"(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?", s)   # local time; offset ignored
     if not m:
         return None
     if s.endswith("Z") and m.group(2):
@@ -259,6 +259,33 @@ def svk_events_from_json(doc) -> list[dict]:
     return out
 
 
+def svk_events_from_list(html: str, page_url: str) -> list[dict]:
+    """Svenska kyrkan's calendar list: <svk-list-item> with <h3><a data-id>, two <time datetime>,
+    the place in the second .list-item__meta, a theme in <svk-chip label>, and .list-item__text."""
+    soup = BeautifulSoup(html, "html.parser")
+    out = []
+    for item in soup.find_all("svk-list-item"):
+        h3 = item.find("h3")
+        times = item.find_all("time", attrs={"datetime": True})
+        if not h3 or not times:
+            continue
+        a = h3.find("a", href=True)
+        metas = item.select(".list-item__meta")
+        place = clean(metas[1].get_text(" ")) if len(metas) > 1 else None
+        chip = item.find("svk-chip")
+        text = item.select_one(".list-item__text")
+        out.append({
+            "title": clean(h3.get_text(" ")),
+            "starts_at": _date(times[0]["datetime"]),
+            "ends_at": _date(times[1]["datetime"]) if len(times) > 1 else None,
+            "location": place,
+            "category": clean(chip.get("label")) if chip else None,
+            "description": clean(text.get_text(" ")) if text else None,
+            "source_url": urllib.parse.urljoin(page_url, a["href"]) if a else page_url,
+        })
+    return out
+
+
 def svk_events_from_html(html: str, page_url: str) -> list[dict]:
     """Fallback: events in the rendered page, found by their <time datetime=...> tags."""
     soup = BeautifulSoup(html, "html.parser")
@@ -286,7 +313,10 @@ def load_svk_calendars(con) -> dict:
             continue
     for org_id, url, body in con.execute("SELECT org_id, final_url, body FROM raw_sites WHERE kind='svkcal' "
                                          "AND body<>'shared'"):
-        if not by_org.get(org_id):
+        found = svk_events_from_list(body or "", url or "")
+        if found:
+            by_org[org_id] = found          # the calendar list is the most complete source
+        elif not by_org.get(org_id):
             by_org[org_id] += svk_events_from_html(body or "", url or "")
     # Churches sharing a pastorat calendar get the events that mention them
     shared = con.execute("SELECT s.org_id, o.name, p.org_id FROM raw_sites s JOIN organizations o ON o.id = s.org_id "
@@ -311,7 +341,7 @@ def load_svk_calendars(con) -> dict:
             con.execute(
                 "INSERT OR REPLACE INTO events(id,org_id,title,starts_at,ends_at,location,city,category,"
                 "description,source_url) VALUES (?,?,?,?,?,?,(SELECT city FROM organizations WHERE id=?),?,?,?)",
-                (eid, org_id, e["title"], e["starts_at"], e["ends_at"], e["location"], org_id, None,
+                (eid, org_id, e["title"], e["starts_at"], e["ends_at"], e["location"], org_id, e.get("category"),
                  (e["description"] or "")[:500] or None, e["source_url"]))
             n += 1
         if n:
