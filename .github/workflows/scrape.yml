@@ -1,0 +1,46 @@
+# Crawls kyrktorget.se into SQLite and builds a PRIVATE preview of the site with real data.
+# Runs only when you start it by hand. Output is kept as workflow artifacts (not committed,
+# not deployed). In a public repo, artifacts can be downloaded by others - keep the repo private
+# if you run this.
+name: Scrape (private)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: "Max pages to crawl"
+        default: "400"
+      delay:
+        description: "Seconds between page loads"
+        default: "2.5"
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python scraper/crawl.py --db data/kyrktorget.db --max-pages "${{ inputs.max_pages }}" --delay "${{ inputs.delay }}"
+      - run: python scraper/normalize.py --db data/kyrktorget.db
+      - run: python scraper/inspect_raw.py data/kyrktorget.db | tee scrape-summary.txt
+      - run: python site/build_site.py --db data/kyrktorget.db --out dist-private
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kyrktorget-data
+          path: |
+            data/kyrktorget.db
+            scrape-summary.txt
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: private-preview-site
+          path: dist-private
+          retention-days: 14

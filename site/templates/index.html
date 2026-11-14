@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Hitta en församling{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="wrap">
+    <p class="eyebrow">{{ n_orgs }} församlingar och verksamheter</p>
+    <h1>Hitta en gemenskap<br>nära dig.</h1>
+    <p class="lede">Sök på ort eller namn, och välj det du letar efter — gudstjänst, söndagsskola, körsång eller ett samtal.</p>
+    <form class="search" role="search" onsubmit="return false">
+      <label class="visually-hidden" for="q">Sök</label>
+      <input id="q" type="search" placeholder="Sök ort, kommun eller församling" autocomplete="off">
+      <label class="visually-hidden" for="county">Län</label>
+      <select id="county">
+        <option value="">Alla län</option>
+        {% for c in counties %}<option>{{ c }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
+</section>
+
+<section class="wrap filters" aria-label="Jag letar efter">
+  <h2 class="section-label">Jag letar efter</h2>
+  <div class="chips" id="chips">
+    {% for a in activities %}
+    <button type="button" class="chip" aria-pressed="false" data-activity="{{ a }}">{{ a }}</button>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="wrap results-wrap" aria-live="polite">
+  <div class="results-head">
+    <h2 id="result-count">{{ n_orgs }} träffar</h2>
+    <button type="button" class="link-button" id="clear" hidden>Rensa filter</button>
+  </div>
+  <ul class="cards" id="results">
+    {% for o in orgs %}
+    <li class="card">
+      <a href="{{ root }}forsamling/{{ o.slug }}/">
+        <span class="card-kicker">{{ o.denomination or o.kind or '' }}</span>
+        <h3>{{ o.name }}</h3>
+        <p class="card-place">{{ o.city }}{% if o.municipality and o.municipality != o.city %}, {{ o.municipality }}{% endif %}</p>
+        <ul class="tags">{% for a in o.activities[:4] %}<li>{{ a }}</li>{% endfor %}{% if o.activities|length > 4 %}<li class="more">+{{ o.activities|length - 4 }}</li>{% endif %}</ul>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="empty" id="empty" hidden>Inga träffar. Prova att ta bort ett filter eller söka på en närliggande ort.</p>
+</section>
+
+{% if upcoming %}
+<section class="band">
+  <div class="wrap">
+    <div class="band-head">
+      <h2>På gång</h2>
+      <a href="{{ root }}kalender/" class="arrow-link">Hela kalendern</a>
+    </div>
+    <ol class="event-strip">
+      {% for e in upcoming %}
+      <li>
+        <time datetime="{{ e.starts_at }}"><span>{{ e.date_label }}</span>{% if e.time_label %} · {{ e.time_label }}{% endif %}</time>
+        <strong>{{ e.title }}</strong>
+        <span class="muted">{{ e.org.name if e.org else e.location }}{% if e.city %}, {{ e.city }}{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script>window.ROOT = "{{ root }}";</script><script src="{{ root }}static/search.js" defer></script>{% endblock %}

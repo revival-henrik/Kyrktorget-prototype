@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ org.name }}{% endblock %}
+{% block content %}
+<div class="wrap detail">
+  <a class="back" href="{{ root }}">Alla församlingar</a>
+  <header class="detail-head">
+    {% if org.denomination or org.kind %}<p class="eyebrow">{{ org.denomination or org.kind }}</p>{% endif %}
+    <h1>{{ org.name }}</h1>
+    <p class="lede">{{ org.city }}{% if org.municipality and org.municipality != org.city %}, {{ org.municipality }}{% endif %}{% if org.county %} · {{ org.county }}{% endif %}</p>
+  </header>
+
+  <div class="detail-grid">
+    <div>
+      {% if org.description %}<div class="prose"><p>{{ org.description }}</p></div>{% endif %}
+
+      {% if org.activities %}
+      <h2>Verksamhet</h2>
+      <ul class="tags tags-lg">{% for a in org.activities %}<li>{{ a }}</li>{% endfor %}</ul>
+      {% endif %}
+
+      <h2>Kommande</h2>
+      {% if events %}
+      <ol class="event-list">
+        {% for e in events %}
+        <li>
+          <time datetime="{{ e.starts_at }}">{{ e.date_label }}{% if e.time_label %}<span>{{ e.time_label }}</span>{% endif %}</time>
+          <div><strong>{{ e.title }}</strong>{% if e.description %}<p>{{ e.description }}</p>{% endif %}</div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="muted">Inga inlagda händelser just nu.</p>
+      {% endif %}
+    </div>
+
+    <aside class="contact-card" aria-label="Kontakt">
+      <h2>Kontakt</h2>
+      <dl>
+        {% if org.address %}<dt>Adress</dt><dd>{{ org.address }}{% if org.postal_code or org.city %}<br>{{ org.postal_code or '' }} {{ org.city or '' }}{% endif %}</dd>{% endif %}
+        {% if org.phone %}<dt>Telefon</dt><dd><a href="tel:{{ org.phone|replace(' ', '') }}">{{ org.phone }}</a></dd>{% endif %}
+        {% if org.email %}<dt>E-post</dt><dd><a href="mailto:{{ org.email }}">{{ org.email }}</a></dd>{% endif %}
+        {% if org.website %}<dt>Webbplats</dt><dd><a href="{{ org.website }}" rel="noopener">{{ org.website|replace('https://','')|replace('http://','') }}</a></dd>{% endif %}
+      </dl>
+      {% if org.address and org.city %}
+      <a class="button" href="https://www.openstreetmap.org/search?query={{ (org.address ~ ', ' ~ org.city)|urlencode }}" rel="noopener">Visa på karta</a>
+      {% endif %}
+    </aside>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Om prototypen{% endblock %}
+{% block content %}
+<div class="wrap page-head narrow">
+  <p class="eyebrow">Om</p>
+  <h1>Om den här prototypen</h1>
+</div>
+<article class="wrap narrow prose">
+  <p>{{ site_name }} är en <strong>oofficiell designstudie</strong> som visar hur en modern, snabb och mobilvänlig församlingskatalog skulle kunna fungera: sök direkt medan du skriver, filtrera på verksamhet och län, och en kalender som går att överblicka.</p>
+  <p>Prototypen är <strong>inte kopplad till, sponsrad av eller godkänd av Kyrktorget.se</strong> eller någon av de församlingar som nämns. Den riktiga tjänsten finns på <a href="https://kyrktorget.se" rel="noopener">kyrktorget.se</a>.</p>
+  {% if is_sample %}
+  <p>Alla församlingar, händelser och jobbannonser på den här versionen är <strong>påhittade exempel</strong>. Län och kommuner är verkliga, men namn, adresser och kontaktuppgifter är fiktiva.</p>
+  {% endif %}
+  <h2>Hur den är byggd</h2>
+  <ul>
+    <li>All data ligger i en SQLite-databas.</li>
+    <li>Ett Python-skript bygger statiska HTML-sidor från databasen — inga servrar, inga cookies, ingen spårning.</li>
+    <li>Sök och filter körs direkt i webbläsaren.</li>
+    <li>Sajten publiceras automatiskt via GitHub Pages.</li>
+  </ul>
+</article>
+{% endblock %}

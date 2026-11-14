@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}{{ site_name }}{% endblock %} · {{ tagline }}</title>
+  <meta name="description" content="Oofficiell konceptprototyp för en modernare församlingskatalog.">
+  <link rel="stylesheet" href="{{ root }}static/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231f5c4f'/%3E%3Cpath d='M16 6v20M10 12h12' stroke='%23f7f4ee' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div class="notice" role="note">
+    <strong>Oofficiell konceptprototyp.</strong>
+    Inte kopplad till eller godkänd av Kyrktorget.se.
+    {% if is_sample %}All data på sidan är påhittad exempeldata.{% endif %}
+    <a href="{{ root }}om/">Läs mer</a>
+  </div>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="{{ root }}">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>{{ site_name }}<small>{{ tagline }}</small></span>
+      </a>
+      <button class="menu-toggle" aria-expanded="false" aria-controls="nav" onclick="this.setAttribute('aria-expanded', document.body.classList.toggle('nav-open'))">Meny</button>
+      <nav id="nav" class="nav" aria-label="Huvudmeny">
+        <a href="{{ root }}" {% if path == 'index.html' %}aria-current="page"{% endif %}>Hitta församling</a>
+        <a href="{{ root }}kalender/" {% if path.startswith('kalender') %}aria-current="page"{% endif %}>Kalender</a>
+        <a href="{{ root }}jobb/" {% if path.startswith('jobb') %}aria-current="page"{% endif %}>Jobb</a>
+        <a href="{{ root }}om/" {% if path.startswith('om') %}aria-current="page"{% endif %}>Om</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div>
+        <strong>{{ site_name }}</strong> — en designstudie för hur en församlingskatalog skulle kunna se ut.
+        <br>Inte en officiell tjänst. Uppdaterad {{ built_at }}.
+      </div>
+      {% if info_pages %}
+      <nav aria-label="Informationssidor" class="footer-links">
+        {% for p in info_pages %}<a href="{{ root }}sida/{{ p.slug }}/">{{ p.title }}</a>{% endfor %}
+      </nav>
+      {% endif %}
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

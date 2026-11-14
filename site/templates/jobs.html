@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Jobb{% endblock %}
+{% block content %}
+<div class="wrap page-head">
+  <h1>Lediga tjänster</h1>
+  <p class="lede">Jobb i församlingar och kristna organisationer.</p>
+</div>
+<div class="wrap">
+  {% if jobs %}
+  <ul class="job-list">
+    {% for j in jobs %}
+    <li class="job">
+      <div>
+        <h2>{{ j.title }}</h2>
+        <p class="muted">{{ j.employer or '' }}{% if j.location %} · {{ j.location }}{% endif %}</p>
+        {% if j.description %}<p>{{ j.description }}</p>{% endif %}
+      </div>
+      <dl class="job-meta">
+        {% if j.published_at %}<dt>Publicerad</dt><dd>{{ j.published_at|sv_date(false) }}</dd>{% endif %}
+        {% if j.deadline %}<dt>Sista ansökningsdag</dt><dd>{{ j.deadline|sv_date(false) }}</dd>{% endif %}
+      </dl>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">Inga annonser just nu.</p>
+  {% endif %}
+</div>
+{% endblock %}

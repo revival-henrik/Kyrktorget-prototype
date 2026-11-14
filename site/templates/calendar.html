@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Kalender{% endblock %}
+{% block content %}
+<div class="wrap page-head">
+  <h1>Kalender</h1>
+  <p class="lede">Gudstjänster, konserter, studiecirklar och mycket mer.</p>
+</div>
+<div class="wrap">
+  <form class="toolbar" onsubmit="return false">
+    <label>Från <input type="date" id="from"></label>
+    <label>Till <input type="date" id="to"></label>
+    <label>Ort
+      <select id="city"><option value="">Alla orter</option>{% for c in cities %}<option>{{ c }}</option>{% endfor %}</select>
+    </label>
+    <label>Typ
+      <select id="category"><option value="">Allt</option>{% for c in categories %}<option>{{ c }}</option>{% endfor %}</select>
+    </label>
+  </form>
+  <div id="calendar" aria-live="polite"></div>
+  <p class="empty" id="cal-empty" hidden>Inga händelser matchar filtret.</p>
+</div>
+{% endblock %}
+{% block scripts %}<script>window.ROOT = "{{ root }}";</script><script src="{{ root }}static/calendar.js" defer></script>{% endblock %}

@@ -1,0 +1,10 @@
+# Generated output
+dist/
+dist-private/
+__pycache__/
+*.pyc
+.venv/
+
+# Databases are generated; real scraped data must never be committed
+data/*.db
+data/*.db-*
