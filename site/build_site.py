@@ -112,11 +112,20 @@ def build(db: Path, out: Path) -> None:
     all_acts = sorted({a for o in orgs for a in o["activities"]})
     counties = sorted({o["county"] for o in orgs if o["county"]})
 
+    # Which churches have upcoming calendar events / a website (colours on the map and in the list)
+    today = dt.date.today().isoformat()
+    upcoming_by_org: dict = {}
+    for e in data["events"]:
+        if e.get("org_id") and e["day"] >= today:
+            upcoming_by_org[e["org_id"]] = upcoming_by_org.get(e["org_id"], 0) + 1
+    for o in orgs:
+        o["n_events"] = upcoming_by_org.get(o["id"], 0)
+
     # JSON for client-side search
     (out / "data").mkdir()
     (out / "data" / "organizations.json").write_text(json.dumps([
         {k: o[k] for k in ("slug", "name", "kind", "denomination", "city", "municipality", "county", "activities",
-                           "lat", "lng", "website")}
+                           "lat", "lng", "website", "n_events")}
         for o in orgs
     ], ensure_ascii=False), encoding="utf-8")
     (out / "data" / "events.json").write_text(json.dumps([

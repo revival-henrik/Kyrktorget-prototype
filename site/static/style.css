@@ -88,6 +88,24 @@ h3 { font-size: 1.2rem; }
 .geo-status { margin: -.75rem 0 1.25rem; font-size: .92rem; color: var(--muted); }
 .distance { float: right; color: var(--muted); letter-spacing: 0; text-transform: none; font-weight: 500; }
 
+/* Calendar / website status */
+.status-legend { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; margin: -.5rem 0 1.25rem; }
+.legend-item { font: inherit; font-size: .85rem; display: inline-flex; align-items: center; gap: .45rem; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: .3rem .8rem .3rem .55rem; cursor: pointer; color: var(--ink); }
+.legend-item i { width: 12px; height: 12px; border-radius: 50%; background: var(--st); box-shadow: 0 0 0 2px #fff, 0 0 0 3px var(--st); }
+.legend-item b { font-weight: 600; color: var(--muted); }
+.legend-item:hover { border-color: var(--st); }
+.legend-item[aria-pressed="true"] { border-color: var(--st); background: color-mix(in srgb, var(--st) 12%, white); }
+.legend-hint { font-size: .78rem; color: var(--muted); }
+.cards .card a, .cards .card a:hover { border-left: 5px solid var(--st, var(--line)); }
+.badges { display: flex; flex-wrap: wrap; gap: .35rem; margin: -.4rem 0 .9rem; }
+.badge { display: inline-flex; align-items: center; gap: .3rem; font-size: .76rem; font-weight: 600; padding: .15rem .55rem; border-radius: 6px; }
+.badge svg { flex: none; }
+.badge-cal { background: #fbf0d9; color: #8a5a00; }
+.badge-web { background: #e3ecf8; color: #1f4f8a; }
+.badge-none { background: #eef0ef; color: #6b7471; font-weight: 500; }
+.map-pop-status { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--muted); }
+.map-pop-status i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
 /* Map */
 .map-panel { margin-bottom: 1rem; }
 #map { height: min(68vh, 620px); border-radius: var(--radius); border: 1px solid var(--line); background: #e8e4dc; z-index: 0; }
