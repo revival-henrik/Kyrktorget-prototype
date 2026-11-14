@@ -41,11 +41,21 @@
         {% if org.email %}<dt>E-post</dt><dd><a href="mailto:{{ org.email }}">{{ org.email }}</a></dd>{% endif %}
         {% if org.website %}<dt>Webbplats</dt><dd><a href="{{ org.website }}" rel="noopener">{{ org.website|replace('https://','')|replace('http://','') }}</a></dd>{% endif %}
       </dl>
-      {% if org.lat is not none and org.lng is not none %}
-      <a class="button" href="https://www.openstreetmap.org/?mlat={{ org.lat }}&amp;mlon={{ org.lng }}#map=16/{{ org.lat }}/{{ org.lng }}" rel="noopener">Visa på karta</a>
-      {% elif org.address and org.city %}
-      <a class="button" href="https://www.openstreetmap.org/search?query={{ (org.address ~ ', ' ~ org.city)|urlencode }}" rel="noopener">Visa på karta</a>
-      {% endif %}
+      {% if org.address and org.city %}{% set dest = org.address ~ ', ' ~ ((org.postal_code ~ ' ') if org.postal_code else '') ~ org.city %}
+      {% elif org.lat is not none and org.lng is not none %}{% set dest = org.lat ~ ',' ~ org.lng %}
+      {% else %}{% set dest = org.name ~ ((', ' ~ org.city) if org.city else '') %}{% endif %}
+      <div class="contact-actions">
+        <a class="button" href="https://www.google.com/maps/dir/?api=1&amp;destination={{ dest|urlencode }}" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 2 4 20l8-4 8 4z" fill="currentColor"/></svg>
+          Vägbeskrivning
+        </a>
+        {% if org.lat is not none and org.lng is not none %}
+        <a class="button button-secondary" href="https://www.openstreetmap.org/?mlat={{ org.lat }}&amp;mlon={{ org.lng }}#map=16/{{ org.lat }}/{{ org.lng }}" target="_blank" rel="noopener">Visa på karta</a>
+        {% elif org.address and org.city %}
+        <a class="button button-secondary" href="https://www.openstreetmap.org/search?query={{ (org.address ~ ', ' ~ org.city)|urlencode }}" target="_blank" rel="noopener">Visa på karta</a>
+        {% endif %}
+      </div>
+      <p class="contact-note">Vägbeskrivningen öppnas i Google Maps.</p>
     </aside>
   </div>
 </div>
