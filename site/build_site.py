@@ -111,7 +111,8 @@ def build(db: Path, out: Path) -> None:
     # JSON for client-side search
     (out / "data").mkdir()
     (out / "data" / "organizations.json").write_text(json.dumps([
-        {k: o[k] for k in ("slug", "name", "kind", "denomination", "city", "municipality", "county", "activities")}
+        {k: o[k] for k in ("slug", "name", "kind", "denomination", "city", "municipality", "county", "activities",
+                           "lat", "lng")}
         for o in orgs
     ], ensure_ascii=False), encoding="utf-8")
     (out / "data" / "events.json").write_text(json.dumps([
@@ -123,7 +124,8 @@ def build(db: Path, out: Path) -> None:
     ], ensure_ascii=False), encoding="utf-8")
 
     upcoming = [e for e in data["events"] if e["day"] >= dt.date.today().isoformat()][:4]
-    render("index.html", "index.html", orgs=orgs, activities=all_acts, counties=counties,
+    n_mapped = sum(1 for o in orgs if o["lat"] is not None and o["lng"] is not None)
+    render("index.html", "index.html", orgs=orgs, activities=all_acts, counties=counties, n_mapped=n_mapped,
            upcoming=upcoming, n_orgs=len(orgs), n_events=len(data["events"]), n_jobs=len(data["jobs"]))
     for o in orgs:
         o_events = [e for e in data["events"] if e.get("org_id") == o["id"]]

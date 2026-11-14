@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Hitta en församling{% endblock %}
+{% block head %}{% if n_mapped %}
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
+{% endif %}{% endblock %}
 {% block content %}
 <section class="hero">
   <div class="wrap">
@@ -29,9 +33,30 @@
 
 <section class="wrap results-wrap" aria-live="polite">
   <div class="results-head">
-    <h2 id="result-count">{{ n_orgs }} träffar</h2>
-    <button type="button" class="link-button" id="clear" hidden>Rensa filter</button>
+    <div class="results-title">
+      <h2 id="result-count">{{ n_orgs }} träffar</h2>
+      <button type="button" class="link-button" id="clear" hidden>Rensa filter</button>
+    </div>
+    <div class="results-tools">
+      <button type="button" class="tool-button" id="near-me">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="7.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        Nära mig
+      </button>
+      {% if n_mapped %}
+      <div class="segmented" role="group" aria-label="Visa som">
+        <button type="button" data-view="lista" aria-pressed="true">Lista</button>
+        <button type="button" data-view="karta" aria-pressed="false">Karta</button>
+      </div>
+      {% endif %}
+    </div>
   </div>
+  <p class="geo-status" id="geo-status" role="status" hidden></p>
+  {% if n_mapped %}
+  <div class="map-panel" id="map-panel" hidden>
+    <div id="map" aria-label="Karta över församlingar"></div>
+    {% if n_mapped < n_orgs %}<p class="muted map-note">{{ n_orgs - n_mapped }} av {{ n_orgs }} saknar koordinater och visas bara i listan.</p>{% endif %}
+  </div>
+  {% endif %}
   <ul class="cards" id="results">
     {% for o in orgs %}
     <li class="card">

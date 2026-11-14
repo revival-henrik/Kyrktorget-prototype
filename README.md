@@ -61,6 +61,14 @@ python scraper/inspect_raw.py data/kyrktorget.db
 python site/build_site.py --db data/kyrktorget.db --out dist-private
 ```
 
+## Map
+
+The "Hitta församling" page has a **Lista / Karta** toggle and a **Nära mig** button. Nära mig
+uses the browser's location to sort results by distance. The map uses Leaflet 1.9.4 (from unpkg,
+with SRI hashes) and OpenStreetMap tiles. Only organisations with `lat`/`lng` in the database
+appear on the map. If the scraped data has no coordinates, add them in `normalize.py`, either
+from the source data or by geocoding the addresses.
+
 ## First scrape: tuning the field mapping
 
 The site loads its data with JavaScript, so the exact JSON field names are only known after

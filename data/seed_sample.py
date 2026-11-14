@@ -29,6 +29,16 @@ PLACES = [  # (city, municipality, county)
     ("Umeå", "Umeå", "Västerbottens län"), ("Luleå", "Luleå", "Norrbottens län"),
     ("Gävle", "Gävle", "Gävleborgs län"), ("Sundsvall", "Sundsvall", "Västernorrlands län"),
 ]
+CITY_COORDS = {  # approximate town centres (lat, lng)
+    "Uppsala": (59.858, 17.639), "Enköping": (59.636, 17.078), "Västerås": (59.611, 16.545),
+    "Örebro": (59.275, 15.213), "Jönköping": (57.783, 14.161), "Huskvarna": (57.786, 14.302),
+    "Växjö": (56.879, 14.806), "Kalmar": (56.661, 16.362), "Linköping": (58.411, 15.622),
+    "Norrköping": (58.588, 16.192), "Göteborg": (57.709, 11.974), "Borås": (57.721, 12.940),
+    "Malmö": (55.605, 13.004), "Lund": (55.705, 13.191), "Kristianstad": (56.029, 14.156),
+    "Stockholm": (59.329, 18.069), "Täby": (59.444, 18.069), "Umeå": (63.826, 20.263),
+    "Luleå": (65.584, 22.155), "Gävle": (60.675, 17.142), "Sundsvall": (62.391, 17.307),
+    "Rättvik": (60.887, 15.117),
+}
 PREFIXES = ["Ljusets", "Källans", "Hoppets", "Vägens", "Bergets", "Ankarets", "Brunnens", "Ljungens",
             "Klippans", "Hamnens", "Ekens", "Fyrens", "Lindens", "Stjärnans", "Älvens", "Ängens"]
 SUFFIXES = ["församling", "kyrka", "kapell", "gemenskap"]
@@ -65,6 +75,12 @@ INFO_PAGES = {
 }
 
 
+def jitter(rnd: random.Random, city: str) -> tuple[float, float]:
+    """Random point a few km from the town centre (fictional addresses, fictional positions)."""
+    lat, lng = CITY_COORDS[city]
+    return round(lat + rnd.uniform(-.025, .025), 5), round(lng + rnd.uniform(-.045, .045), 5)
+
+
 def build(out: Path) -> None:
     rnd = random.Random(42)
     if out.exists():
@@ -91,14 +107,14 @@ def build(out: Path) -> None:
             city, muni, county, f"https://example.org/{slug}-{city.lower()}",
             f"info@{slug}.example.org", f"0{rnd.randint(10, 99)}-{rnd.randint(100, 999)} {rnd.randint(10, 99)} {rnd.randint(10, 99)}",
             f"En levande gemenskap mitt i {city}. Välkommen som du är — till gudstjänst, fika och samtal. "
-            f"(Fiktiv exempelförsamling.)", None, None, None))
+            f"(Fiktiv exempelförsamling.)", *jitter(rnd, city), None))
         con.executemany("INSERT INTO activities VALUES (?,?)", [(oid, a) for a in acts])
 
     for j, (name, kind, city, muni, county) in enumerate(OTHER):
         oid = f"demo-x{j + 1}"
         con.execute("INSERT INTO organizations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
             oid, name, kind, None, "Skogsvägen 3", "795 00", city, muni, county, None,
-            "kontakt@example.org", None, "Fiktiv exempelverksamhet för prototypen.", None, None, None))
+            "kontakt@example.org", None, "Fiktiv exempelverksamhet för prototypen.", *jitter(rnd, city), None))
         orgs.append(oid)
 
     today = dt.date.today()
