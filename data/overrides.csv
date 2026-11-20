@@ -1,7 +1,9 @@
 # Hand-made corrections, applied every time normalize.py runs.
 # match:   a church's id (see the address of its page) or its exact name
+# name:    the right name (leave empty to keep)
 # website: the right website (leave empty to keep)
 # samfund: the right denomination(s), several separated by |  (leave empty to keep)
-match,website,samfund,note
-One Heart Church,https://www.oneheart.church/,Andra frikyrkor,Fristående kyrka i Stockholm
-Södermalmskyrkan Stockholm,https://www.waochurch.com/stockholm/,Andra frikyrkor,WAO Church (We Are One)
+match,name,website,samfund,note
+One Heart Church,,https://www.oneheart.church/,Andra frikyrkor,Fristående kyrka i Stockholm
+Södermalmskyrkan Stockholm,,https://www.waochurch.com/stockholm/,Andra frikyrkor,WAO Church (We Are One)
+korskyrkan.malmo,Korskyrkan Malmö,,,Namnet var bara "*" i Kyrktorgets data

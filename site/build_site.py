@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html as htmllib
 import json
 import re
 import shutil
@@ -22,6 +23,7 @@ SAMFUND_ORDER = ["Svenska kyrkan", "Katolska kyrkan", "Ortodoxa kyrkor", "EFS", 
                  "Evangeliska Frikyrkan", "Alliansmissionen", "Frälsningsarmén", "ELM", "Laestadianer",
                  "Adventistsamfundet", "Trosrörelsen", "Lutherska frikyrkor", "Andra frikyrkor", "Övriga"]
 SITE_NAME = "Församlingsguiden"
+PAGE_SIZE = 48          # cards shown at a time on the front page (more with "Visa fler")
 TAGLINE = "Konceptprototyp"
 
 MONTHS = ["januari", "februari", "mars", "april", "maj", "juni", "juli",
@@ -49,6 +51,17 @@ def sv_date(s: str | None, with_time: bool = True) -> str:
     if with_time and (d.hour or d.minute):
         out += f" kl. {d:%H:%M}"
     return out
+
+
+def clean_text(s: str | None) -> str:
+    """Event descriptions sometimes arrive as HTML ("<p>…</p>\\n"): keep the plain text."""
+    if not s:
+        return ""
+    s = s.replace("\\n", "\n")
+    s = re.sub(r"<br\s*/?>|</p>", "\n", s, flags=re.I)
+    s = htmllib.unescape(re.sub(r"<[^>]+>", " ", s))
+    s = re.sub(r"[ \t\r\f\v]+", " ", s)
+    return re.sub(r"\s*\n\s*", "\n", s).strip()
 
 
 def slugify(s: str) -> str:
@@ -89,8 +102,10 @@ def load(db: Path) -> dict:
     events = q("SELECT * FROM events ORDER BY starts_at")
     for e in events:
         # "11.00 Gudstjänst" -> "Gudstjänst" (the time is shown separately)
+        e["title"] = htmllib.unescape(htmllib.unescape(e["title"] or "")).strip()
         e["title"] = re.sub(r"^\s*(kl\.?\s*)?\d{1,2}[.:]\d{2}(\s*[-–]\s*\d{1,2}[.:]\d{2})?\s*[-–:,]?\s*", "",
                             e["title"] or "", flags=re.I) or e["title"]
+        e["description"] = clean_text(e.get("description"))
         e["org"] = by_id.get(e.get("org_id"))
         e["date_label"] = sv_date(e["starts_at"], with_time=False)
         d = parse_dt(e["starts_at"])
@@ -120,6 +135,7 @@ def build(db: Path, out: Path) -> None:
         "has_events": bool(data["events"]),
         "has_jobs": bool(data["jobs"]),
         "built_at": dt.date.today().isoformat(),
+        "v": dt.datetime.now().strftime("%Y%m%d%H%M%S"),   # cache-buster for CSS/JS after each build
         "info_pages": data["pages"],
     }
 
@@ -131,7 +147,13 @@ def build(db: Path, out: Path) -> None:
         target.write_text(env.get_template(template).render(root=root, path=path, **common, **ctx), encoding="utf-8")
 
     orgs = data["orgs"]
-    all_acts = sorted({a for o in orgs for a in o["activities"]})
+    # Filter chips: activities several churches share, most common first (skips one-offs such as
+    # "Scout onsdagar kl. 18.30-20.00")
+    act_counts = defaultdict(int)
+    for o in orgs:
+        for a in o["activities"]:
+            act_counts[a] += 1
+    all_acts = [a for a, n in sorted(act_counts.items(), key=lambda x: (-x[1], x[0])) if n >= 3]
     counties = sorted({o["county"] for o in orgs if o["county"]})
     samfund_counts = {s: sum(1 for o in orgs if s in o["samfund"]) for s in SAMFUND_ORDER}
     samfund_list = [(s, n) for s, n in samfund_counts.items() if n]
@@ -162,7 +184,7 @@ def build(db: Path, out: Path) -> None:
 
     upcoming = [e for e in data["events"] if e["day"] >= dt.date.today().isoformat()][:4]
     n_mapped = sum(1 for o in orgs if o["lat"] is not None and o["lng"] is not None)
-    render("index.html", "index.html", orgs=orgs, activities=all_acts, counties=counties, n_mapped=n_mapped,
+    render("index.html", "index.html", orgs=orgs[:PAGE_SIZE], activities=all_acts, counties=counties, n_mapped=n_mapped,
            samfund_list=samfund_list,
            upcoming=upcoming, n_orgs=len(orgs), n_events=len(data["events"]), n_jobs=len(data["jobs"]))
     for o in orgs:

@@ -5,7 +5,7 @@
         empty = $("empty"), clear = $("clear"), nearBtn = $("near-me"), geoStatus = $("geo-status"),
         mapPanel = $("map-panel"), chips = [...document.querySelectorAll(".chip")],
         viewBtns = [...document.querySelectorAll("[data-view]")];
-  const orgs = await fetch(ROOT + "data/organizations.json").then((r) => r.json());
+  const orgs = await fetch(ROOT + "data/organizations.json?v=" + (window.V || "")).then((r) => r.json());
   const fold = (s) => (s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   orgs.forEach((o) => (o._hay = fold([o.name, o.city, o.municipality, o.county, o.denomination, (o.samfund || []).join(" ")].join(" "))));
   const hasCoords = (o) => typeof o.lat === "number" && typeof o.lng === "number";
@@ -25,6 +25,9 @@
   orgs.forEach((o) => (o._status = statusOf(o)));
   const statusFilter = new Set();
   let view = "lista", me = null, map = null, layer = null, meMarker = null, lastHits = [];
+  const PAGE = 48;               // cards rendered at a time: thousands of cards are slow on phones
+  let shown = PAGE;
+  const moreWrap = $("more-wrap"), moreBtn = $("show-more");
 
   // Restore state from URL so filtered views can be shared
   const params = new URLSearchParams(location.search);
@@ -46,7 +49,8 @@
   const fmtKm = (d) => (d < 10 ? d.toFixed(1).replace(".", ",") : Math.round(d)) + " km";
 
   function place(o) {
-    return o.city + (o.municipality && o.municipality !== o.city ? ", " + o.municipality : "");
+    const city = o.city || "", muni = o.municipality && o.municipality !== o.city ? o.municipality : "";
+    return [city, muni].filter(Boolean).join(", ") || o.county || "";
   }
 
   function card(o) {
@@ -139,6 +143,7 @@
     viewBtns.forEach((b) => b.setAttribute("aria-pressed", b.dataset.view === v));
     if (mapPanel) mapPanel.hidden = v !== "karta";
     results.hidden = v === "karta";
+    if (moreWrap) moreWrap.hidden = v === "karta" || lastHits.length <= shown;
     if (v === "karta") {
       if (window.L) drawMap(lastHits);
       else window.addEventListener("load", () => drawMap(lastHits), { once: true });
@@ -205,13 +210,31 @@
     orgs.forEach((o) => (o._dist = me && hasCoords(o) ? km(me, o) : null));
     if (me) hits = [...hits].sort((a, b) => (a._dist ?? Infinity) - (b._dist ?? Infinity));
     lastHits = hits;
-    results.innerHTML = hits.map(card).join("");
+    shown = PAGE;
+    renderCards();
     count.textContent = `${hits.length} ${hits.length === 1 ? "träff" : "träffar"}`;
     empty.hidden = hits.length > 0;
     clear.hidden = !(terms.length || county.value || (samfundSel && samfundSel.value) || selected.size || statusFilter.size);
     if (view === "karta" && window.L) drawMap(hits);
     syncUrl();
   }
+
+  function renderCards() {
+    results.innerHTML = lastHits.slice(0, shown).map(card).join("");
+    const left = lastHits.length - shown;
+    if (moreWrap) {
+      moreWrap.hidden = left <= 0;
+      moreBtn.textContent = `Visa fler (${left} till)`;
+    }
+  }
+  if (moreBtn) moreBtn.addEventListener("click", () => {
+    const first = shown;
+    shown += PAGE;
+    results.insertAdjacentHTML("beforeend", lastHits.slice(first, shown).map(card).join(""));
+    const left = lastHits.length - shown;
+    moreWrap.hidden = left <= 0;
+    moreBtn.textContent = `Visa fler (${left} till)`;
+  });
 
   q.addEventListener("input", update);
   county.addEventListener("change", update);

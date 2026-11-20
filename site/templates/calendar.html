@@ -17,7 +17,10 @@
     </label>
   </form>
   <div id="calendar" aria-live="polite"></div>
+  <div class="more-wrap" id="cal-more-wrap" hidden>
+    <button type="button" class="button button-secondary" id="cal-more">Visa fler</button>
+  </div>
   <p class="empty" id="cal-empty" hidden>Inga händelser matchar filtret.</p>
 </div>
 {% endblock %}
-{% block scripts %}<script>window.ROOT = "{{ root }}";</script><script src="{{ root }}static/calendar.js" defer></script>{% endblock %}
+{% block scripts %}<script>window.ROOT = "{{ root }}"; window.V = "{{ v }}";</script><script src="{{ root }}static/calendar.js?v={{ v }}" defer></script>{% endblock %}

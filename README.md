@@ -61,7 +61,7 @@ scraper/samfund.py         Works out each church's denomination (samfund)
 scraper/inspect_raw.py     Shows which JSON endpoints/fields were captured
 data/build_public_db.py    PUBLIC database from OpenStreetMap only (used by GitHub Pages)
 data/seed_sample.py        Fictional sample data (fallback if OpenStreetMap is unreachable)
-data/overrides.csv         Hand-made corrections to websites and denominations
+data/overrides.csv         Hand-made corrections to names, websites and denominations
 site/build_site.py         SQLite -> static HTML in dist/
 site/templates/            Jinja2 templates
 site/static/               CSS + small JS for search and calendar

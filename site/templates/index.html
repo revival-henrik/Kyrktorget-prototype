@@ -75,6 +75,9 @@
     </li>
     {% endfor %}
   </ul>
+  <div class="more-wrap" id="more-wrap" hidden>
+    <button type="button" class="button button-secondary" id="show-more">Visa fler</button>
+  </div>
   <p class="empty" id="empty" hidden>Inga träffar. Prova att ta bort ett filter eller söka på en närliggande ort.</p>
 </section>
 
@@ -98,4 +101,4 @@
 </section>
 {% endif %}
 {% endblock %}
-{% block scripts %}<script>window.ROOT = "{{ root }}";</script><script src="{{ root }}static/search.js" defer></script>{% endblock %}
+{% block scripts %}<script>window.ROOT = "{{ root }}"; window.V = "{{ v }}";</script><script src="{{ root }}static/search.js?v={{ v }}" defer></script>{% endblock %}

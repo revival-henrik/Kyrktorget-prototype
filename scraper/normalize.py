@@ -746,6 +746,8 @@ def load_overrides(con) -> int:
                 continue
             ids = [r[0] for r in con.execute("SELECT id FROM organizations WHERE id=? OR name=?", (key, key))]
             for oid in ids:
+                if (row.get("name") or "").strip():
+                    con.execute("UPDATE organizations SET name=? WHERE id=?", (row["name"].strip(), oid))
                 if (row.get("website") or "").strip():
                     con.execute("UPDATE organizations SET website=? WHERE id=?", (row["website"].strip(), oid))
                 if (row.get("samfund") or "").strip():
