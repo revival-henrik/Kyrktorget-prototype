@@ -116,6 +116,9 @@ def build(db: Path, out: Path) -> None:
         "site_name": SITE_NAME,
         "tagline": TAGLINE,
         "is_sample": data["meta"].get("dataset") == "sample",
+        "is_osm": data["meta"].get("dataset") == "openstreetmap",
+        "has_events": bool(data["events"]),
+        "has_jobs": bool(data["jobs"]),
         "built_at": dt.date.today().isoformat(),
         "info_pages": data["pages"],
     }

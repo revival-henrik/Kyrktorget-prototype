@@ -8,6 +8,10 @@
 <article class="wrap narrow prose">
   <p>{{ site_name }} är en <strong>oofficiell designstudie</strong> som visar hur en modern, snabb och mobilvänlig församlingskatalog skulle kunna fungera: sök direkt medan du skriver, filtrera på verksamhet och län, och en kalender som går att överblicka.</p>
   <p>Prototypen är <strong>inte kopplad till, sponsrad av eller godkänd av Kyrktorget.se</strong> eller någon av de församlingar som nämns. Den riktiga tjänsten finns på <a href="https://kyrktorget.se" rel="noopener">kyrktorget.se</a>.</p>
+  {% if is_osm %}
+  <p>Kyrkorna på den här versionen kommer från <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a>, en fri och öppen karta som byggs av frivilliga. Namn, adresser, positioner och webbplatser är verkliga uppgifter därifrån, licensierade under Open Database License (ODbL). Inget kommer från Kyrktorget.</p>
+  <p>Saknas en kyrka, eller är något fel? Rätta det direkt i OpenStreetMap, så syns ändringen här vid nästa uppdatering (en gång i veckan).</p>
+  {% endif %}
   {% if is_sample %}
   <p>Alla församlingar, händelser och jobbannonser på den här versionen är <strong>påhittade exempel</strong>. Län och kommuner är verkliga, men namn, adresser och kontaktuppgifter är fiktiva.</p>
   {% endif %}

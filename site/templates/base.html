@@ -15,6 +15,7 @@
     <strong>Oofficiell konceptprototyp.</strong>
     Inte kopplad till eller godkänd av Kyrktorget.se.
     {% if is_sample %}All data på sidan är påhittad exempeldata.{% endif %}
+    {% if is_osm %}Uppgifterna om kyrkorna kommer från OpenStreetMap.{% endif %}
     <a href="{{ root }}om/">Läs mer</a>
   </div>
   <header class="topbar">
@@ -26,8 +27,8 @@
       <button class="menu-toggle" aria-expanded="false" aria-controls="nav" onclick="this.setAttribute('aria-expanded', document.body.classList.toggle('nav-open'))">Meny</button>
       <nav id="nav" class="nav" aria-label="Huvudmeny">
         <a href="{{ root }}" {% if path == 'index.html' %}aria-current="page"{% endif %}>Hitta församling</a>
-        <a href="{{ root }}kalender/" {% if path.startswith('kalender') %}aria-current="page"{% endif %}>Kalender</a>
-        <a href="{{ root }}jobb/" {% if path.startswith('jobb') %}aria-current="page"{% endif %}>Jobb</a>
+        {% if has_events %}<a href="{{ root }}kalender/" {% if path.startswith('kalender') %}aria-current="page"{% endif %}>Kalender</a>{% endif %}
+        {% if has_jobs %}<a href="{{ root }}jobb/" {% if path.startswith('jobb') %}aria-current="page"{% endif %}>Jobb</a>{% endif %}
         <a href="{{ root }}om/" {% if path.startswith('om') %}aria-current="page"{% endif %}>Om</a>
       </nav>
     </div>

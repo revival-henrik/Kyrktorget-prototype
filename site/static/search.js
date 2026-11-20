@@ -75,7 +75,7 @@
     if (!legend) return;
     const counts = { both: 0, cal: 0, web: 0, none: 0 };
     base.forEach((o) => counts[o._status]++);
-    legend.innerHTML = Object.entries(STATUS).map(([key, s]) => `
+    legend.innerHTML = Object.entries(STATUS).filter(([key]) => counts[key] > 0 || statusFilter.has(key)).map(([key, s]) => `
       <button type="button" class="legend-item" data-status="${key}" aria-pressed="${statusFilter.has(key)}"
         style="--st:${s.color}"><i></i>${esc(s.label)} <b>${counts[key]}</b></button>`).join("")
       + `<span class="legend-hint">Klicka för att filtrera</span>`;

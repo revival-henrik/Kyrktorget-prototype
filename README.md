@@ -19,8 +19,10 @@ Kyrktorget's directory is a compiled database, and under Swedish/EU law it is pr
 a whole (the catalogue right, upphovsrättslagen §49). We don't have permission to
 republish it, so:
 
-- The **public demo** (GitHub Pages) is built **only from fictional sample data**
-  (`data/seed_sample.py`).
+- The **public site** (GitHub Pages) is built **only from OpenStreetMap** (`data/build_public_db.py`):
+  real churches with names, addresses, positions and websites, openly licensed (ODbL) and credited.
+  Nothing from Kyrktorget is used there. If OpenStreetMap is unreachable, fictional sample data
+  (`data/seed_sample.py`) is used instead.
 - **Real scraped data** stays private: the scrape workflow keeps it as short-lived
   workflow artifacts, and `.gitignore` blocks `*.db` from being committed.
 - The site sets `noindex`, and every page carries an "unofficial prototype" banner.
