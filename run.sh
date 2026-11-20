@@ -2,6 +2,7 @@
 # One command for everything. Usage:
 #
 #   ./run.sh           rebuild the site from the data you have and open it   (~1 minute)
+#   ./run.sh quick     refresh a few churches, then rebuild and open         (~3 minutes)
 #   ./run.sh update    fetch new data first, then rebuild and open           (minutes to hours)
 #   ./run.sh full      like update, but also re-lists all churches on Kyrktorget
 #
@@ -10,6 +11,9 @@
 #   MAX_SEARCHES=20               max web searches per run (default 20 while developing;
 #                                 900 ≈ Brave's free monthly credit, 0 = no limit)
 #   PORT=8000                     port for the local website
+#   QUICK_SVK=3                   Svenska kyrkan calendars per quick run (default 3)
+#   QUICK_SITES=40                church websites per quick run (default 40)
+#   QUICK_FIND=15                 churches to look for a missing website per quick run (default 15)
 
 set -e
 cd "$(dirname "$0")"
@@ -21,6 +25,9 @@ step() { printf "\n\033[1;32m==> %s\033[0m\n" "$1"; }
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
 PORT="${PORT:-8000}"
 MAX_SEARCHES="${MAX_SEARCHES:-20}"
+QUICK_SVK="${QUICK_SVK:-3}"
+QUICK_SITES="${QUICK_SITES:-40}"
+QUICK_FIND="${QUICK_FIND:-15}"
 
 # --- Python environment (created automatically the first time) ------------
 if [ ! -d .venv ]; then
@@ -45,6 +52,17 @@ fi
 # Keep the Mac awake during long runs
 KEEP_AWAKE=""
 command -v caffeinate >/dev/null && KEEP_AWAKE="caffeinate -i"
+
+# --- quick update: a few churches each run, the ones updated longest ago ---
+# OpenStreetMap, the denomination directories and Kyrktorget change rarely: use update/full for those.
+if [ "$MODE" = "quick" ]; then
+  step "1/3 Looking for missing websites (up to $QUICK_FIND churches)"
+  python scraper/find_websites.py --db "$DB" --max "$QUICK_FIND" --max-searches "$MAX_SEARCHES"
+  step "2/3 Re-reading the $QUICK_SITES church websites updated longest ago"
+  python scraper/crawl_websites.py --db "$DB" --refresh --max-sites "$QUICK_SITES"
+  step "3/3 Svenska kyrkan: re-reading the $QUICK_SVK calendars updated longest ago"
+  python scraper/crawl_svk_calendar.py --db "$DB" --refresh --max "$QUICK_SVK"
+fi
 
 # --- fetch data -------------------------------------------------------------
 if [ "$MODE" = "update" ] || [ "$MODE" = "full" ]; then
@@ -78,6 +96,7 @@ step "Building the website"
 python scraper/normalize.py --db "$DB"
 python scraper/normalize_websites.py --db "$DB"
 python site/build_site.py --db "$DB" --out dist-private
+echo "(took $((SECONDS / 60)) min $((SECONDS % 60)) s)"
 
 # --- serve ------------------------------------------------------------------
 step "Starting the website on http://localhost:$PORT"

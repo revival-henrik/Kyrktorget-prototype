@@ -178,7 +178,10 @@ async def run(db: Path, max_sites: int, delay: float, workers: int, refresh: boo
     ).fetchall()
     done = set() if refresh else {r[0] for r in con.execute(
         "SELECT DISTINCT org_id FROM raw_sites WHERE kind IN ('home', 'error')")}
-    todo = [(oid, url) for oid, url in rows if oid not in done]
+    # Oldest first: sites never fetched, then the ones fetched longest ago
+    last = dict(con.execute("SELECT org_id, max(fetched_at) FROM raw_sites "
+                            "WHERE kind IN ('home', 'error') GROUP BY org_id"))
+    todo = sorted(((oid, url) for oid, url in rows if oid not in done), key=lambda r: last.get(r[0]) or "")
     if max_sites:
         todo = todo[:max_sites]
     print(f"{len(rows)} parishes have a website; fetching {len(todo)} now ({len(done)} already done)")
@@ -220,7 +223,7 @@ async def run(db: Path, max_sites: int, delay: float, workers: int, refresh: boo
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="data/kyrktorget.db", type=Path)
-    ap.add_argument("--max-sites", default=0, type=int, help="0 = all")
+    ap.add_argument("--max-sites", default=0, type=int, help="max sites this run, oldest first (0 = all)")
     ap.add_argument("--delay", default=1.5, type=float, help="seconds between requests to the same site")
     ap.add_argument("--workers", default=6, type=int, help="different sites fetched in parallel")
     ap.add_argument("--refresh", action="store_true", help="fetch again even if already saved")

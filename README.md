@@ -30,25 +30,56 @@ republish it, so:
 If Kyrktorget gives permission later, you can build the public site from the real database
 by pointing `build_site.py` at it.
 
+### Local site vs. public site
+
+Both are built by the same `site/build_site.py` and look the same; only the data differs.
+
+| | Local site (`dist-private`, localhost) | Public site (GitHub Pages) |
+|---|---|---|
+| Data | `data/kyrktorget.db`: Kyrktorget, OpenStreetMap, the denominations' directories and the churches' own websites | `data/public.db`: OpenStreetMap only |
+| Detail | Descriptions, activities, contact details and calendar events | Name, denomination, address, position, website, phone/e-mail where OpenStreetMap has them; few or no events |
+| Built by | `./run.sh` on your Mac | GitHub Actions on every push to `main` and every Monday |
+| Visible to | Only you | Anyone with the link |
+
+OpenStreetMap data is © OpenStreetMap contributors under the Open Database License (ODbL). It may
+be republished as long as it is credited (the site footer does this) and any database derived from
+it is shared under the same licence.
+
 ## Project layout
 
 ```
 db/schema.sql              Database schema (raw + normalised tables)
 scraper/crawl.py           Playwright crawler (respects robots.txt, 2.5 s delay, skips login pages)
+scraper/fetch_osm.py       Svenska kyrkan churches and church websites from OpenStreetMap
+scraper/fetch_directories.py  The denominations' own church directories (Equmeniakyrkan, Pingst …)
+scraper/find_websites.py   Finds and verifies websites for churches without one
+scraper/crawl_websites.py  Visits each church's own website
+scraper/crawl_svk_calendar.py  Svenska kyrkan calendars
 scraper/normalize.py       Raw JSON/HTML -> clean tables (edit ALIASES after first run)
+scraper/normalize_websites.py  Newest info from the churches' websites and calendars
+scraper/samfund.py         Works out each church's denomination (samfund)
 scraper/inspect_raw.py     Shows which JSON endpoints/fields were captured
-data/seed_sample.py        Fictional demo data
+data/build_public_db.py    PUBLIC database from OpenStreetMap only (used by GitHub Pages)
+data/seed_sample.py        Fictional sample data (fallback if OpenStreetMap is unreachable)
+data/overrides.csv         Hand-made corrections to websites and denominations
 site/build_site.py         SQLite -> static HTML in dist/
 site/templates/            Jinja2 templates
 site/static/               CSS + small JS for search and calendar
-.github/workflows/         pages.yml (public demo), scrape.yml (private, manual)
+.github/workflows/         pages.yml (public site), scrape.yml (private, manual)
 ```
 
 ## Quick start (Mac)
 
-Double-click **Starta webbplatsen.command** to build the site from your data and open it, or
-**Uppdatera data.command** to fetch new data first. The same from Terminal: `./run.sh` or
-`./run.sh update`. Settings such as a Brave Search key go in a file called `.env`
+Double-click **Starta webbplatsen.command** to build the site from your data and open it,
+**Snabbuppdatering.command** for a quick update (~3 minutes), or **Uppdatera data.command** to
+fetch all new data first (can take hours). The same from Terminal: `./run.sh`, `./run.sh quick` or
+`./run.sh update`.
+
+The quick update refreshes a few churches each time, always the ones updated longest ago: 3
+Svenska kyrkan calendars, 40 church websites, and up to 15 churches still missing a website.
+Run it daily and every church gets its turn. Change the numbers with `QUICK_SVK`,
+`QUICK_SITES` and `QUICK_FIND` in `.env`. OpenStreetMap, the denominations' directories and
+Kyrktorget are only read by `update`/`full`; a weekly run is plenty. Settings such as a Brave Search key go in a file called `.env`
 (see the top of `run.sh`); it is never uploaded to GitHub.
 
 ## Run locally
@@ -58,18 +89,24 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
 
-# Demo site with fictional data
+# Public site (OpenStreetMap only) - the same as GitHub Pages
+python data/build_public_db.py --out data/public.db
+python site/build_site.py --db data/public.db --out dist
+python -m http.server -d dist 8000          # open http://localhost:8000
+
+# Fictional sample data (no network needed)
 python data/seed_sample.py
 python site/build_site.py --db data/sample.db --out dist
-python -m http.server -d dist 8000          # open http://localhost:8000
 
 # Real data (private use only)
 python scraper/crawl.py --db data/kyrktorget.db                  # 1. parish list + kyrktorget pages (1-2 h, resumable)
-python scraper/fetch_osm.py --db data/kyrktorget.db              # 2a. church websites from OpenStreetMap (~2 min)
+python scraper/fetch_osm.py --db data/kyrktorget.db              # 2a. churches and websites from OpenStreetMap (~2 min)
+python scraper/fetch_directories.py --db data/kyrktorget.db      #     the denominations' own church directories
 python scraper/normalize.py --db data/kyrktorget.db              # 2b. -> tables
 python scraper/find_websites.py --db data/kyrktorget.db          # 2c. find + verify missing websites
 python scraper/normalize.py --db data/kyrktorget.db              # 2d. apply them
 python scraper/crawl_websites.py --db data/kyrktorget.db         # 3. each parish's own website (resumable)
+python scraper/crawl_svk_calendar.py --db data/kyrktorget.db --refresh  # 3b. Svenska kyrkan calendars
 python scraper/normalize_websites.py --db data/kyrktorget.db     # 4. newest info from the websites
 python site/build_site.py --db data/kyrktorget.db --out dist-private
 python -m http.server -d dist-private 8000                       # open http://localhost:8000
@@ -144,6 +181,7 @@ The crawl can be stopped (Ctrl+C) and started again: pages already saved are ski
 
 ## GitHub Pages
 
-Settings → Pages → Source: **GitHub Actions**. Each push to `main` deploys the demo.
+Settings → Pages → Source: **GitHub Actions**. Each push to `main` deploys the public site
+(OpenStreetMap data only), and it is rebuilt every Monday with fresh data.
 Note: Pages on a **private** repo needs a paid GitHub plan. On GitHub Free, either make the
 repo public (and don't run the scrape workflow there), or keep it private and preview locally.

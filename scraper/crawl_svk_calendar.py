@@ -64,7 +64,8 @@ def calendar_url(home_html: str, root: str) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="data/kyrktorget.db", type=Path)
-    ap.add_argument("--max", default=0, type=int, help="max parishes this run (0 = all)")
+    ap.add_argument("--max", default=0, type=int,
+                    help="max parish calendars to read this run, oldest first (0 = all)")
     ap.add_argument("--delay", default=2.0, type=float, help="seconds between parishes")
     ap.add_argument("--more", default=15, type=int, help="max presses of 'Visa fler händelser' per parish")
     ap.add_argument("--days", default=60, type=int, help="read events this many days ahead")
@@ -76,12 +77,22 @@ def main() -> None:
     rows = con.execute("SELECT id, name, website FROM organizations WHERE website LIKE '%svenskakyrkan.se/%'"
                        " ORDER BY id").fetchall()
     done = set() if a.refresh else {r[0] for r in con.execute("SELECT org_id FROM raw_sites WHERE kind='svkcal'")}
-    todo = [r for r in rows if r[0] not in done]
-    # One calendar per parish site: several churches can share a pastorat's site
-    seen_roots: dict[str, str] = {}
+    # Oldest first: churches never read, then the ones read (or tried) longest ago
+    last = dict(con.execute("SELECT org_id, max(fetched_at) FROM raw_sites "
+                            "WHERE kind IN ('svkcal', 'svkcal-tried') GROUP BY org_id"))
+    todo = sorted((r for r in rows if r[0] not in done), key=lambda r: last.get(r[0]) or "")
+    # One calendar per parish site: several churches can share a pastorat's site, so group them
+    # and read each site once. --max counts parish sites (calendar reads), not churches.
+    groups: dict[str, list] = {}
+    for r in todo:
+        root = parish_root(r[2])
+        if root:
+            groups.setdefault(root, []).append(r)
+    plan = list(groups.items())
     if a.max:
-        todo = todo[:a.max]
-    print(f"{len(rows)} churches have a Svenska kyrkan website; reading {len(todo)} calendars now")
+        plan = plan[:a.max]
+    print(f"{len(rows)} churches have a Svenska kyrkan website; reading {len(plan)} parish calendars now "
+          f"({sum(len(m) for _, m in plan)} churches)")
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -90,17 +101,14 @@ def main() -> None:
         until = (dt.date.today() + dt.timedelta(days=a.days)).isoformat()
         cookies_done = False
 
-        for i, (oid, name, website) in enumerate(todo, 1):
-            root = parish_root(website)
-            if not root:
-                continue
-            if root in seen_roots and not a.refresh:
-                # same parish site as a church we already read: reuse its calendar
-                con.execute("INSERT OR REPLACE INTO raw_sites(url,org_id,kind,status,final_url,body,fetched_at)"
-                            " VALUES (?,?,?,?,?,?,?)", (f"svkcal-shared:{oid}", oid, "svkcal", 200,
-                                                        seen_roots[root], "shared", now()))
-                con.commit()
-                continue
+        for i, (root, members) in enumerate(plan, 1):
+            oid, name, website = members[0]
+            ids = [m[0] for m in members]
+            # Remember the attempt, so a parish that keeps failing doesn't block the queue
+            con.executemany("INSERT OR REPLACE INTO raw_sites(url,org_id,kind,status,final_url,body,fetched_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            [(f"svkcal-tried:{m}", m, "svkcal-tried", None, None, None, now()) for m in ids])
+            con.commit()
             home = con.execute("SELECT body FROM raw_sites WHERE org_id=? AND kind IN ('found','home') AND status=200 "
                                "AND final_url LIKE '%svenskakyrkan.se%' LIMIT 1", (oid,)).fetchone()
             home_html = home[0] if home else ""
@@ -136,11 +144,17 @@ def main() -> None:
                 print(f"  [error] {name}: {exc}", file=sys.stderr)
                 time.sleep(a.delay)
                 continue
+            # Replace these churches' earlier calendar rows: the first church holds the calendar,
+            # the others in the same parish point to it
+            con.execute(f"DELETE FROM raw_sites WHERE kind='svkcal' AND org_id IN ({','.join('?' * len(ids))})", ids)
             con.execute("INSERT OR REPLACE INTO raw_sites(url,org_id,kind,status,final_url,body,fetched_at)"
                         " VALUES (?,?,?,?,?,?,?)", (f"svkcal:{oid}", oid, "svkcal", 200, cal, html, now()))
+            con.executemany("INSERT OR REPLACE INTO raw_sites(url,org_id,kind,status,final_url,body,fetched_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            [(f"svkcal-shared:{m}", m, "svkcal", 200, cal, "shared", now()) for m in ids[1:]])
             con.commit()
-            seen_roots[root] = cal
-            print(f"  [{i}/{len(todo)}] {name}: {state['n']} events (until {state['last']})")
+            extra = f" (+{len(ids) - 1} churches in the same parish)" if len(ids) > 1 else ""
+            print(f"  [{i}/{len(plan)}] {name}: {state['n']} events (until {state['last']}){extra}")
             time.sleep(a.delay)
         browser.close()
     con.close()
